@@ -200,16 +200,21 @@ class _PcapySource:
         return self._closed
 
     def _record(self, header: Any, data: bytes | bytearray | memoryview) -> CapturedPacket:
-        self._packet_id += 1
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise CaptureError("capture record payload is not bytes-like")
         raw = bytes(data)
         getcaplen = getattr(header, "getcaplen", None)
         getlen = getattr(header, "getlen", None)
         captured_length = int(getcaplen()) if callable(getcaplen) else len(raw)
         wire_length = int(getlen()) if callable(getlen) else captured_length
+        if captured_length != len(raw) or wire_length < captured_length:
+            raise CaptureError("capture record lengths do not match its payload")
+        timestamp_ns = _timestamp_ns(header)
+        self._packet_id += 1
         return CapturedPacket(
             session_id=self.session_id,
             packet_id=self._packet_id,
-            timestamp_ns=_timestamp_ns(header),
+            timestamp_ns=timestamp_ns,
             interface=self.interface,
             datalink=self.datalink,
             captured_length=captured_length,
@@ -228,44 +233,67 @@ class _PcapySource:
 
         batch: list[CapturedPacket] = []
 
-        def collect(header: Any, data: bytes) -> None:
-            batch.append(self._record(header, data))
-
-        dispatch = getattr(self._handle, "dispatch", None)
-        if callable(dispatch):
-            try:
-                result = dispatch(limit, collect)
-                if result == -1:
-                    geterr = getattr(self._handle, "geterr", None)
-                    detail = geterr() if callable(geterr) else "libpcap dispatch failed"
-                    raise CaptureError(str(detail))
-                if self.offline and not batch and result in (0, -2, None):
-                    self._eof = True
-                return batch
-            except (AttributeError, NotImplementedError, TypeError):
-                # Some old pcapy builds expose dispatch but do not implement
-                # bounded dispatch correctly.  ``next`` is slower but safe.
-                pass
-
+        # Prefer the documented record-returning API over native callbacks.
+        # Some binding/Python combinations consume a packet before failing to
+        # invoke dispatch's callback correctly. Falling back after that failure
+        # silently loses the consumed packet; never switch APIs after a read.
         next_packet = getattr(self._handle, "next", None)
-        if not callable(next_packet):
-            raise CaptureError("pcapy handle exposes neither dispatch nor next")
+        if callable(next_packet):
+            try:
+                # Live handles have already enabled nonblocking mode before
+                # reaching this class, so a bounded batch cannot multiply the
+                # configured blocking timeout by the packet count.
+                for _ in range(limit):
+                    item = next_packet()
+                    if not isinstance(item, (tuple, list)) or len(item) != 2:
+                        raise CaptureError("capture next() returned a malformed record")
+                    header, data = item
+                    if header is None:
+                        # Native pcapy-ng uses (None, b''); the stdlib reader and
+                        # several other bindings use (None, None).
+                        if data is not None and not (
+                            isinstance(data, (bytes, bytearray, memoryview))
+                            and len(data) == 0
+                        ):
+                            raise CaptureError("capture next() returned data without a header")
+                        if self.offline:
+                            self._eof = True
+                        break
+                    if data is None:
+                        raise CaptureError("capture next() returned a header without data")
+                    batch.append(self._record(header, data))
+            except CaptureError:
+                raise
+            except Exception as exc:
+                raise CaptureError(f"capture next() failed: {type(exc).__name__}") from exc
+            return batch
 
-        # Live ``next`` may wait for the configured timeout.  Reading just one
-        # packet in fallback mode avoids multiplying that delay by batch size.
-        reads = limit if self.offline else 1
-        for _ in range(reads):
-            item = next_packet()
-            if not item or len(item) != 2:
-                if self.offline:
-                    self._eof = True
-                break
-            header, data = item
-            if header is None or data is None:
-                if self.offline:
-                    self._eof = True
-                break
+        # Compatibility for dispatch-only adapters. A count/callback mismatch
+        # or callback exception is fatal, never an idle/EOF indication and never
+        # a reason to retry another read API after packets may be consumed.
+        dispatch = getattr(self._handle, "dispatch", None)
+        if not callable(dispatch):
+            raise CaptureError("pcapy handle exposes neither next nor dispatch")
+
+        def collect(header: Any, data: bytes) -> None:
+            if len(batch) >= limit:
+                raise CaptureError("capture dispatch exceeded its bounded packet count")
             batch.append(self._record(header, data))
+
+        try:
+            result = dispatch(limit, collect)
+        except CaptureError:
+            raise
+        except Exception as exc:
+            raise CaptureError(f"capture dispatch failed: {type(exc).__name__}") from exc
+        if result == -1:
+            geterr = getattr(self._handle, "geterr", None)
+            detail = geterr() if callable(geterr) else "libpcap dispatch failed"
+            raise CaptureError(str(detail))
+        if type(result) is not int or result < 0 or result != len(batch):
+            raise CaptureError("capture dispatch count does not match delivered records")
+        if self.offline and result == 0:
+            self._eof = True
         return batch
 
     def packets(

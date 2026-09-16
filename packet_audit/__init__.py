@@ -1,3 +1,3 @@
 """Packet Audit: stream-aware sensitive-information auditing."""
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"

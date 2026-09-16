@@ -1,6 +1,17 @@
 # Reliability and acceptance gate
 
-## What 0.1.3 changes
+## What 0.1.4 changes
+
+- Capture uses bounded `next()` reads instead of native callback dispatch when
+  available. A Kali Python 3.13 binding reproduced a callback argument error;
+  the previous fallback could consume a packet and then silently skip it.
+  Callback-only compatibility paths now fail visibly on errors or count
+  disagreement instead of falling through after consuming data.
+- A native libpcap offline regression checks every packet, byte and timestamp
+  across multiple batch boundaries. Live acceptance must still be run on the
+  actual sensor; mocked capture tests alone did not detect this binding fault.
+
+## Reliability controls introduced in 0.1.3
 
 - Live libpcap must support nonblocking mode. Idle reads wait at most 100ms
   between iterations instead of depending on a blocking packet-buffer timeout.
