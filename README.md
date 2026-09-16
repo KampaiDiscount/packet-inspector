@@ -3,6 +3,48 @@
 Packet Inspector uses the Packet Audit engine. The Python package, commands,
 and service names remain `packet-audit` for compatibility with existing installs.
 
+**Platform:** Kali/Debian Linux with Python 3.11+, libpcap and Wireshark
+`dumpcap`. For native Windows capture, use the separate
+[Packet Inspector for Windows](https://github.com/KampaiDiscount/packet-inspector-windows)
+project and its Windows-specific package.
+
+## Get Packet Inspector
+
+Download the source package and `SHA256SUMS.txt` from
+[GitHub Releases](https://github.com/KampaiDiscount/packet-inspector/releases).
+The current package is **0.1.4**, published as a **test prerelease** while
+deployment-specific live-capture qualification remains required.
+
+| Asset | Purpose |
+| --- | --- |
+| `packet_audit-0.1.4.tar.gz` | Source distribution with the Kali installer, systemd units, configuration, documentation and tests; recommended for host installation. |
+| `packet_audit-0.1.4-py3-none-any.whl` | Python engine for an existing prepared environment. It does not install system packages, services or capture permissions. |
+| `SHA256SUMS.txt` | SHA-256 hashes of the two attached package files. |
+
+Download both package files to check the complete manifest, then extract the
+source distribution:
+
+```bash
+sha256sum -c SHA256SUMS.txt
+tar -xzf packet_audit-0.1.4.tar.gz
+cd packet_audit-0.1.4
+sudo bash ./scripts/install-kali.sh
+```
+
+Alternatively, clone the current development branch:
+
+```bash
+git clone https://github.com/KampaiDiscount/packet-inspector.git
+cd packet-inspector
+sudo bash ./scripts/install-kali.sh
+```
+
+Review [release notes](RELEASE.md), [coverage](COVERAGE.md) and
+[qualification checks](RELIABILITY.md) before deployment. The installer
+prepares the host but does not start or enable capture; continue with the
+configuration and lifecycle instructions below. The native `pcapy-ng`
+dependency is built on Linux and is not bundled in the wheel.
+
 **Qualification status:** this is an actively tested assessment tool, not a
 certified lossless sensor. See [COVERAGE.md](COVERAGE.md) for supported wire
 formats and [RELIABILITY.md](RELIABILITY.md) for regression evidence and the
@@ -180,7 +222,7 @@ changes. This mode checks the required tools, Python headers, and libpcap.
 Run the installer from the repository root:
 
 ```bash
-cd /path/to/packet_audit
+cd /path/to/packet-inspector
 sudo bash ./scripts/install-kali.sh
 ```
 
@@ -555,3 +597,15 @@ The scripts are intended for current Kali/Debian systems using systemd. Read
 them before running on an assessment host; installation changes packages,
 accounts, file capabilities, and systemd files, but never network interception
 state.
+
+## Contributing, support and license
+
+Use [GitHub Issues](https://github.com/KampaiDiscount/packet-inspector/issues)
+for reproducible bugs and feature requests. Include the package version,
+Python/OS versions and sanitized diagnostics. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for development setup and [SECURITY.md](SECURITY.md) for private vulnerability
+reports. Never attach real credentials, unredacted evidence or raw assessment
+captures to a public issue.
+
+Licensed under [GPL-3.0-or-later](LICENSE); third-party acknowledgements and
+handling boundaries are documented in [NOTICE.md](NOTICE.md).

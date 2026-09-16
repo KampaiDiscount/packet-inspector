@@ -1,4 +1,29 @@
-# Packet Inspector / Packet Audit 0.1.3 release notes
+# Packet Inspector / Packet Audit 0.1.4 test prerelease
+
+Package release date: 2026-09-17. Runtime fix committed: 2026-09-16.
+
+- Uses bounded native `next()` reads to prevent a callback-binding failure
+  from consuming and silently skipping captured packets.
+- Rejects malformed records and callback count mismatches visibly.
+- Adds native libpcap offline regression coverage across batch boundaries,
+  including payload bytes, packet IDs, timestamps and wire lengths.
+- Publishes the source distribution, Python wheel and SHA-256 manifest.
+- Adds package project links and complete source-install/download guidance.
+
+The source distribution includes the Kali installer and supporting systemd,
+configuration, documentation and test files. The wheel contains the Python
+engine; it is not a standalone host installer and does not bundle `pcapy-ng`,
+libpcap or `dumpcap`. Python 3.11+ and target-host dependencies are required.
+
+This is a test prerelease. Automated regression checks and native offline
+binding tests do not establish live NIC performance, sustained-load coverage,
+systemd recovery or hardware qualification. Run the acceptance checks in
+[RELIABILITY.md](RELIABILITY.md) on the intended sensor. Existing deployments
+are not automatically upgraded by publishing these packages.
+
+---
+
+# Historical Packet Inspector / Packet Audit 0.1.3 release notes
 
 Release date: 2026-09-16
 

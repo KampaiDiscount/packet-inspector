@@ -12,6 +12,15 @@ license = "GPL-3.0-or-later"
 license-files = ["LICENSE", "NOTICE.md"]
 authors = [{ name = "Packet Audit contributors" }]
 dependencies = ["pcapy-ng==1.1.0"]
+keywords = ["packet-inspection", "network-audit", "pcap", "kali-linux"]
+
+[project.urls]
+Homepage = "https://github.com/KampaiDiscount/packet-inspector"
+Documentation = "https://github.com/KampaiDiscount/packet-inspector#readme"
+Repository = "https://github.com/KampaiDiscount/packet-inspector"
+Issues = "https://github.com/KampaiDiscount/packet-inspector/issues"
+Releases = "https://github.com/KampaiDiscount/packet-inspector/releases"
+Changelog = "https://github.com/KampaiDiscount/packet-inspector/blob/main/RELEASE.md"
 
 [project.scripts]
 packet-audit = "packet_audit.cli:main"

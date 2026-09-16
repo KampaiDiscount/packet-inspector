@@ -10,3 +10,5 @@ recursive-include tools *.py
 include LOGIN_FIELDS.md
 include COVERAGE.md
 include RELIABILITY.md
+include CONTRIBUTING.md
+include SECURITY.md
