@@ -1,0 +1,72 @@
+[Unit]
+Description=Packet Audit authorized live capture on %I
+Documentation=file:/opt/packet-audit/README.md
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/packet-audit/packet-audit.toml
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+# READY follows capture/worker/writer initialization. Only completed capture
+# iterations send watchdog pings, so a wedged native read cannot look healthy.
+TimeoutStartSec=90s
+WatchdogSec=90s
+LimitCORE=0
+User=packet-audit
+Group=packet-audit
+SupplementaryGroups=wireshark
+
+# Each interface gets an independent working directory, raw ring, and JSONL
+# writer. The strict umask makes newly created unredacted files mode 0600 and
+# directories mode 0700 unless the application requests something stricter.
+StateDirectory=packet-audit/%i packet-audit/%i/evidence packet-audit/%i/evidence/pcap-ring
+StateDirectoryMode=0700
+RuntimeDirectory=packet-audit/%i
+RuntimeDirectoryMode=0700
+WorkingDirectory=/var/lib/packet-audit/%i
+UMask=0077
+
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/usr/local/libexec/packet-audit-doctor --config /etc/packet-audit/packet-audit.toml --interface %I
+ExecStart=/opt/packet-audit/venv/bin/packet-audit live --config /etc/packet-audit/packet-audit.toml --interface %I
+
+# SIGINT lets the dispatcher, workers, JSONL writer, and dumpcap ring close in
+# order. KillMode=mixed signals the supervisor first, then guarantees no child
+# survives if graceful shutdown exceeds TimeoutStopSec.
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=75s
+SendSIGKILL=yes
+Restart=on-failure
+RestartSec=5s
+
+# Live pcap and dumpcap require only these network capture capabilities. They
+# are scoped to this service; never attach capabilities to the Python binary.
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=true
+
+LimitNOFILE=65536
+TasksMax=256
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_PACKET AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

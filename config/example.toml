@@ -1,0 +1,41 @@
+[capture]
+interface = "eth0"
+bpf = "ip or ip6"
+workers = 4
+queue_size = 64
+max_worker_queue_bytes = 67108864
+snaplen = 262144
+capture_buffer_mb = 128
+promiscuous = true
+read_timeout_ms = 100
+capture_batch_size = 128
+
+[analysis]
+flow_idle_seconds = 300
+fragment_idle_seconds = 30
+max_flows_per_worker = 20000
+max_stream_bytes_per_direction = 2097152
+max_out_of_order_bytes_per_direction = 524288
+max_reassembly_bytes_per_worker = 134217728
+detector_overlap_bytes = 131072
+max_detector_bytes_per_worker = 134217728
+max_fragment_routes = 65536
+heartbeat_seconds = 10
+generic_secret_scan = true
+credit_card_scan = true
+extra_sensitive_field_names = []
+
+[output]
+output_jsonl = "./evidence/findings-unredacted.jsonl"
+operational_jsonl = "./evidence/operations.jsonl"
+console_findings = false
+console_unredacted = false
+
+[raw_capture]
+raw_capture_enabled = true
+raw_capture_dir = "./evidence/pcap-ring"
+raw_capture_file_mb = 256
+raw_capture_files = 24
+raw_capture_duration_seconds = 300
+dumpcap_path = "dumpcap"
+stop_on_raw_capture_failure = true

@@ -1,0 +1,41 @@
+# Restricted evidence and runtime credentials must never enter source control.
+*.pcap
+*.pcapng
+*.cap
+*.jsonl
+evidence/
+pcap-ring/
+recovered*/
+*.log
+.dashboard-token
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local runtime, dependencies, build output and test caches.
+.venv/
+venv/
+.testdeps/
+.builddeps/
+.distcheck/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+*.whl
+*.tar.gz
+outputs/
+
+# Editor/OS files.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

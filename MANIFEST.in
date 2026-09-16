@@ -1,0 +1,12 @@
+include LICENSE
+include NOTICE.md
+include README.md
+include RELEASE.md
+recursive-include config *.toml
+recursive-include scripts *.sh
+recursive-include systemd *.service
+recursive-include tests *.py
+recursive-include tools *.py
+include LOGIN_FIELDS.md
+include COVERAGE.md
+include RELIABILITY.md

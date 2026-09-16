@@ -1,0 +1,58 @@
+[Unit]
+Description=Packet Audit private read-only dashboard for %I
+Documentation=file:/opt/packet-audit/README.md
+# No Requires/PartOf/BindsTo relationship: this dashboard must never control
+# capture. Start capture once first so that its private evidence directory exists.
+After=network.target
+ConditionPathIsDirectory=/var/lib/packet-audit/%i/evidence
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=packet-audit
+Group=packet-audit
+RuntimeDirectory=packet-audit-web/%i
+RuntimeDirectoryMode=0700
+UMask=0077
+WorkingDirectory=/var/lib/packet-audit/%i
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# A single port intentionally supports one interface dashboard at a time.
+# Operator-selected token-free loopback mode; all local clients can read it.
+# Host/Origin checks remain enforced. Remote access uses an SSH tunnel.
+ExecStart=/opt/packet-audit/venv/bin/packet-audit serve --evidence-dir /var/lib/packet-audit/%i/evidence --host 127.0.0.1 --port 8765 --no-auth
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+
+# Reuse the evidence owner for read access without widening file permissions.
+# The mount namespace prohibits writes to evidence, including via this owner.
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/packet-audit/%i
+InaccessiblePaths=-/var/lib/packet-audit/%i/evidence/pcap-ring
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+SystemCallArchitectures=native
+IPAddressDeny=any
+IPAddressAllow=localhost
+LimitNOFILE=1024
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
