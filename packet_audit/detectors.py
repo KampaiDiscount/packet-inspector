@@ -152,6 +152,9 @@ _HTTP_GATE_RE = re.compile(
 _HTTP_START_LINE_RE = re.compile(
     rb"(?m)^(?:(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT|TRACE) [^\r\n ]{1,8192} HTTP/1\.[01]|HTTP/1\.[01] [1-5][0-9]{2}(?: [^\r\n]{0,256})?)\r?\n"
 )
+_HTTP_TEXT_FIELD_RE = re.compile(
+    rb"(?im)^(login|logon|username|user|password|passwd|passcode)[ \t]*[:=][ \t]*([^\r\n&;]{1,4096})\r?$"
+)
 _LINE_GATE_RE = re.compile(
     rb"(?im)(?:^|\r?\n)(?:USER|PASS|AUTH\s|\S+\s+(?:LOGIN|AUTHENTICATE)\s|NICK\s|PRIVMSG\s|JOIN\s|CAP\s|(?:login|logon|username|password|passwd|passcode)\s*[:=])"
 )
@@ -2487,6 +2490,28 @@ class SensitiveDetector:
         # "username=...&password=...".  Those are HTTP fields, not a Telnet,
         # FTP, POP3, SMTP, or IMAP exchange even when the line resembles one.
         # Keep the protocol-specific HTTP parser and generic secret scan below.
+        if not message.encoded_content and message.content_type not in {
+            "application/x-www-form-urlencoded", "application/json"
+        } and not message.content_type.endswith("+json"):
+            for match in _HTTP_TEXT_FIELD_RE.finditer(
+                message.body + (b"\n" if message.complete else b"")
+            ):
+                value = match.group(2).rstrip(b" \t")
+                if not value:
+                    continue
+                start, end = message.wire_span(match.start(2), match.start(2) + len(value))
+                label = match.group(1).decode("ascii")
+                finding = self._emit(
+                    message_ctx, state, detector="http_text_login_field",
+                    start=start, end=end,
+                    category="credential" if label.lower() in {"password", "passwd", "passcode"} else "identity",
+                    protocol="http", material_type="http_text_login_field",
+                    material={"field": label, "value": value.decode("latin-1"), "source": "text_body"},
+                    confidence="medium",
+                    limitations=["Credential-like line in an HTTP body; application use and authentication success were not established."],
+                )
+                if finding:
+                    findings.append(finding)
         if self.generic_secret_scan:
             findings.extend(self._scan_generic_secrets(generic_ctx, state))
             findings.extend(self._scan_pem_private_keys(generic_ctx, state))

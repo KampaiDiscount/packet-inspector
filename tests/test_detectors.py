@@ -347,6 +347,7 @@ def test_framed_http_form_does_not_become_terminal_authentication() -> None:
         for item in by_type(findings, "sensitive_field")
     )
     assert not by_type(findings, "telnet_like_login_field")
+    assert not by_type(findings, "http_text_login_field")
     assert not any(
         item.protocol in {"telnet", "plaintext_terminal", "ftp_or_pop3", "ftp", "pop3", "smtp", "imap"}
         for item in findings
@@ -369,6 +370,25 @@ def test_http_authorization_scheme_is_not_a_generic_secret() -> None:
     assert [(item.material["name"], item.material["value"]) for item in named] == [
         ("client_secret", "synthetic-secret-123")
     ]
+
+
+def test_http_text_line_keeps_short_secret_with_http_context() -> None:
+    body = b"login: synthetic-user\npassword: x\n"
+    request = (
+        b"POST /text HTTP/1.1\r\n"
+        b"Host: synthetic.invalid\r\n"
+        b"Content-Type: text/plain\r\n"
+        b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+    )
+    findings = SensitiveDetector("session").process_stream(
+        chunk(request, target_flow=flow(40000, 8888))
+    )
+    fields = by_type(findings, "http_text_login_field")
+    assert [(item.protocol, item.material["field"], item.material["value"]) for item in fields] == [
+        ("http", "login", "synthetic-user"),
+        ("http", "password", "x"),
+    ]
+    assert not by_type(findings, "telnet_like_login_field")
 
 
 def test_unframed_name_value_is_generic_not_http() -> None:
