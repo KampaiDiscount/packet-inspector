@@ -35,6 +35,7 @@ def test_replay_preserves_repeated_http_basic_attempts(tmp_path: Path):
     )
     result = AuditSupervisor(config, offline_path=capture).run()
     assert result["userspace_queue_drops"] == 0
+    assert result["libpcap_received_minus_captured"] is None
     assert result["verdict"] == "complete", result["incomplete_reasons"]
     assert result["worker_packets_processed"] == result["dispatched_packets"]
     assert result["writer_findings_written"] == result["worker_findings_emitted"]

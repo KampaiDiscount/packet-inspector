@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import deque
 from pathlib import Path
 import socket
 import sys
@@ -17,6 +18,7 @@ from packet_audit.capture import CaptureError, CaptureStats, PcapyLiveSource
 from packet_audit.config import AuditConfig
 from packet_audit.service_watchdog import ServiceWatchdog, ServiceWatchdogError
 from packet_audit.supervisor import AuditSupervisor
+from tests.test_packets import ethernet, ipv4, udp_datagram
 
 
 class _IdleHandle:
@@ -274,6 +276,82 @@ def test_blocked_capture_sends_no_watchdog_ping_until_loop_completes(tmp_path, m
     assert result[0]["verdict"] == "complete"
     assert watchdog.messages[1] == "WATCHDOG=1"
     assert watchdog.messages[-1].startswith("STOPPING=1\n")
+
+
+class _NativeStopHandle:
+    """Model a native live handle with an accepted packet still unread at stop."""
+
+    def __init__(self, raw, stop, stats):
+        header = SimpleNamespace(
+            getts=lambda: (1, 0),
+            getcaplen=lambda: len(raw),
+            getlen=lambda: len(raw),
+        )
+        self.records = deque([(header, raw)])
+        self.stop = stop
+        self.native_stats = stats
+        self.closed = False
+        self.nonblock = 0
+
+    def datalink(self): return 1
+    def setfilter(self, _value): pass
+    def setnonblock(self, value): self.nonblock = value
+    def getnonblock(self): return self.nonblock
+    def close(self): self.closed = True
+    def stats(self): return self.native_stats
+
+    def next(self):
+        if self.records:
+            return self.records.popleft()
+        self.stop()
+        return None, b""
+
+
+@pytest.mark.parametrize(
+    "native_stats,expected_verdict,expected_gap,reason_fragment",
+    [
+        ((31, 0, 0), "incomplete", 30, "accounting mismatch"),
+        ((1, 0, 0), "complete", 0, None),
+        ((2, 1, 0), "incomplete", 1, "libpcap_dropped reported 1"),
+        (None, "incomplete", None, "statistics unavailable"),
+    ],
+)
+def test_live_native_stats_reconcile_at_stop(
+    tmp_path, monkeypatch, native_stats, expected_verdict, expected_gap, reason_fragment
+):
+    config = AuditConfig(
+        workers=1, heartbeat_seconds=1, raw_capture_enabled=False,
+        output_jsonl=tmp_path / "findings.jsonl",
+        operational_jsonl=tmp_path / "operations.jsonl",
+    )
+    supervisor = AuditSupervisor(config)
+    raw = ethernet(ipv4(udp_datagram(b"synthetic"), protocol=17))
+    handle = _NativeStopHandle(raw, supervisor.request_stop, native_stats)
+    source = _live_source(handle)
+    monkeypatch.setattr(supervisor, "_source", lambda: source)
+
+    result = supervisor.run()
+
+    assert handle.closed
+    assert result["captured_packets"] == 1
+    assert result["worker_packets_processed"] == result["dispatched_packets"] == 1
+    assert result["libpcap_received_minus_captured"] == expected_gap
+    assert result["verdict"] == expected_verdict, result["incomplete_reasons"]
+    if reason_fragment:
+        assert any(reason_fragment in reason for reason in result["incomplete_reasons"])
+    else:
+        assert result["incomplete_reasons"] == []
+    operations = [
+        json.loads(line) for line in config.operational_jsonl.read_text().splitlines()
+    ]
+    stopped = next(record for record in operations if record["event"] == "session_stopped")
+    assert stopped["libpcap_received_minus_captured"] == expected_gap
+    assert stopped["captured_packets"] == 1
+    if native_stats == (31, 0, 0):
+        assert any(
+            "received_minus_captured=30" in reason
+            for reason in stopped["pre_writer_incomplete_reasons"]
+        )
 
 
 @pytest.mark.parametrize("failure_point", ["WATCHDOG=1", "STOPPING=1"])

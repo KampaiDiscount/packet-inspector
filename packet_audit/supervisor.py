@@ -602,6 +602,7 @@ class AuditSupervisor:
             "libpcap_received": None,
             "libpcap_dropped": None,
             "interface_dropped": None,
+            "libpcap_received_minus_captured": None,
         }
         worker_packets_processed = 0
         worker_findings_emitted = 0
@@ -707,6 +708,11 @@ class AuditSupervisor:
                         "libpcap_received": stats.received,
                         "libpcap_dropped": stats.dropped,
                         "interface_dropped": stats.interface_dropped,
+                        "libpcap_received_minus_captured": (
+                            stats.received - self.captured_packets
+                            if stats.received is not None and not self.offline_path
+                            else None
+                        ),
                     }
                 except Exception as exc:
                     self._mark_incomplete(
@@ -1073,6 +1079,23 @@ class AuditSupervisor:
                     "fragment routing lacked a first-fragment flow hint for "
                     f"{self.fragment_route_fallbacks} datagrams"
                 )
+            if not self.offline_path:
+                received = final_capture_stats["libpcap_received"]
+                dropped = final_capture_stats["libpcap_dropped"]
+                if received is None or dropped is None:
+                    self._mark_incomplete(
+                        "final live libpcap receive/drop statistics unavailable; "
+                        "capture delivery cannot be reconciled"
+                    )
+                elif received - dropped != self.captured_packets:
+                    self._mark_incomplete(
+                        "final live capture accounting mismatch: "
+                        f"libpcap_received={received}, libpcap_dropped={dropped}, "
+                        f"captured={self.captured_packets}, "
+                        "received_minus_captured="
+                        f"{final_capture_stats['libpcap_received_minus_captured']}; "
+                        "capture delivery at shutdown is unresolved"
+                    )
             for counter_name in ("libpcap_dropped", "interface_dropped"):
                 value = final_capture_stats[counter_name]
                 if value:

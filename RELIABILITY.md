@@ -69,6 +69,21 @@ burst, so sustained traffic at the same rate can exhaust the finite queue.
   ring checks, crash-loop circuit breaker and durable shutdown acknowledgement
   remain. Standalone CLI execution does not have systemd's external watchdog.
 
+On Linux, libpcap's `ps_recv` counts packets accepted by the capture filter;
+`ps_drop` counts accepted packets dropped before delivery. The final live
+summary reports `libpcap_received_minus_captured` and requires
+`ps_recv - ps_drop == captured_packets` for a complete verdict. A difference
+or missing receive/drop statistics makes the verdict incomplete. A positive
+difference with zero reported drops may be packets buffered when capture
+stopped; it is an unresolved delivery gap, not proof of a kernel drop.
+The statistics are sampled immediately before closing the live handle, so
+traffic arriving between that sample and close cannot be ruled out. A zero
+gap also does not prove that all traffic on the wire reached the capture
+interface, and `ps_ifdrop == 0` can mean the counter is unavailable. Offline
+replay has no comparable native statistics and does not use this check.
+See libpcap's [Linux statistics notes](https://github.com/the-tcpdump-group/libpcap/blob/master/doc/README.linux)
+and [pcap_stats manual](https://github.com/the-tcpdump-group/libpcap/blob/master/pcap_stats.3pcap).
+
 A restart loses in-memory reassembly state and can miss traffic during recovery.
 It is a visible recovery mechanism, not seamless capture. A forced kill may not
 write a final summary: absence of a completed session verdict is itself a gap.
