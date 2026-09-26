@@ -1,4 +1,27 @@
-# Packet Inspector / Packet Audit 0.1.5 test prerelease
+# Packet Inspector / Packet Audit 0.1.6 test prerelease
+
+Package release date: 2026-09-26.
+
+- Recognizes PNG, JPEG, GIF, WebP, PDF and ZIP file signatures in bounded,
+  clear HTTP/1 request and response bodies, with packet provenance and only
+  file-type/header metadata in findings. The raw PCAP ring remains independent.
+- Excludes verified binary file bodies from credential-text classification,
+  preventing incidental bytes in an image from appearing as a login or token.
+- Recognizes short explicit Bearer values, distinguishes ordinary cookies from
+  session-name candidates, and validates bounded compact JWT structure before
+  issuing a high-confidence label. Token validity and signatures are not tested.
+- Replays the actual lab PNG transfer and prior SMB/authentication captures,
+  in addition to unit, segmentation, false-positive and performance checks.
+
+File signatures are observations of a prefix, not proof of a completed
+transfer. This tracker does not decode encrypted, compressed, chunked,
+HTTP/2/3, or most multipart content. A real secret embedded inside a file is
+not inspected by generic text scanners once the binary body is verified. See
+[COVERAGE.md](COVERAGE.md) for exact boundaries and health counters.
+
+---
+
+# Historical Packet Inspector / Packet Audit 0.1.5 test prerelease
 
 Package release date: 2026-09-26.
 

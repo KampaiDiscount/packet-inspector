@@ -1,5 +1,16 @@
 # Reliability and acceptance gate
 
+## What 0.1.6 changes
+
+- Explicit short Bearer credentials are retained, while generic cookies and
+  structurally invalid JWT-shaped text no longer claim a confirmed session or
+  high-confidence token. JWT structure does not verify its signature or issuer.
+- Bounded file-signature checks identify PNG, JPEG, GIF, WebP, PDF and ZIP
+  prefixes in clear HTTP/1 bodies. The finding stores metadata and packet
+  provenance, not file bytes; the separately configured raw ring is unchanged.
+- Verified binary file bodies are excluded from credential-text scanning to
+  avoid falsely treating incidental image bytes as an authentication exchange.
+
 ## What 0.1.5 changes
 
 - Correlates a single zero-SessionId SMB2 NTLM challenge and response within
