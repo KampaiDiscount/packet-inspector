@@ -94,6 +94,22 @@ def test_zip_data_descriptor_alone_is_not_a_file_header():
     assert files(SensitiveDetector("test").process_stream(chunk(payload))) == []
 
 
+def test_keepalive_auth_then_bytewise_file_headers():
+    auth = (
+        b"POST /auth HTTP/1.1\r\nHost: example.invalid\r\n"
+        b"Authorization: Basic dGVzdDp0ZXN0\r\nContent-Length: 0\r\n\r\n"
+    )
+    upload = request(PNG, content_type=b"image/png")
+    detector = SensitiveDetector("test")
+    seen = detector.process_stream(chunk(auth))
+    for index, byte in enumerate(upload):
+        seen += detector.process_stream(chunk(bytes((byte,)), len(auth) + index, index + 2))
+    assert len([finding for finding in seen if finding.material_type == "http_basic_credentials"]) == 1
+    signatures = files(seen)
+    assert len(signatures) == 1
+    assert signatures[0].material["file_type"] == "png"
+
+
 def test_large_body_uses_prefix_without_retaining_file_contents():
     private_marker = b"DO-NOT-RETAIN-PRIVATE-BODY-45819"
     body = PNG + b"z" * 10_000 + private_marker + b"z" * 10_000

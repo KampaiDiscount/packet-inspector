@@ -113,10 +113,10 @@ def _signature(data: bytes) -> tuple[str, int] | None:
 def transfer_candidate_in(data: bytes | bytearray, new_bytes: int) -> bool:
     """Avoid a second HTTP parser on body-free authentication traffic."""
 
-    if b"HTTP/1." not in data:
+    recent = data[-min(len(data), max(256, new_bytes + 128)):]
+    if _CANDIDATE_GATE.search(recent) is None:
         return False
-    recent = data[-min(len(data), max(512, new_bytes + 256)):]
-    return _CANDIDATE_GATE.search(recent) is not None
+    return b"HTTP/1." in data
 
 
 def _multipart_part(prefix: bytes, boundary: bytes) -> tuple[int, str | None, str | None] | None:

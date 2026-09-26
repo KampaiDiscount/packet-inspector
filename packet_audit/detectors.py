@@ -1766,7 +1766,7 @@ class SensitiveDetector:
             "_scan_ldap": min(self.overlap_bytes, 64 * 1024),
             "_scan_mssql": min(self.overlap_bytes, 64 * 1024),
             "_scan_kerberos": min(self.overlap_bytes, 64 * 1024),
-            "_scan_generic_secrets": min(self.overlap_bytes, 768),
+            "_scan_generic_secrets": min(self.overlap_bytes, _MAX_LINE + 128),
             "_scan_pem_private_keys": min(self.overlap_bytes, 66 * 1024),
             "_scan_cards": 64,
         }
@@ -1891,7 +1891,15 @@ class SensitiveDetector:
                 return True
             if _GENERIC_NAMED_GATE_RE.search(probe) is not None:
                 return True
-            if b"." in probe and _JWT_CANDIDATE_RE.search(probe) is not None:
+            # A segmented compact JWT can have its first dot beyond the
+            # ordinary gate lookback. Search the current bounded text line.
+            jwt_start, _ = self._scanner_range(ctx, state, scanner_name, _MAX_LINE + 128)
+            cursor = state.scan_cursors.get((ctx.direction, scanner_name), ctx.base_offset)
+            new_start = max(0, min(cursor, ctx.base_offset + len(ctx.data)) - ctx.base_offset)
+            previous_newline = ctx.data.rfind(b"\n", jwt_start, new_start)
+            jwt_start = max(jwt_start, previous_newline + 1)
+            if (ctx.data.count(b".", jwt_start) >= 2
+                    and _JWT_CANDIDATE_RE.search(ctx.data, jwt_start) is not None):
                 return True
             if self.sensitive_fields != _SENSITIVE_FIELDS:
                 return any(name.encode("utf-8", "ignore") in probe for name in self.sensitive_fields)
