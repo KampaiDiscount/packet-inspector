@@ -196,6 +196,8 @@ packet keyword search. Implemented families are:
   fields are complete;
 - JWTs, selected cloud/source-control/chat/payment token formats, named secret
   assignments, PEM private keys, and Luhn-valid payment-card candidates.
+- clear HTTP/1 request/response bodies whose first bytes match PNG, JPEG, GIF,
+  WebP, PDF or ZIP signatures, with packet provenance and metadata-only findings.
 
 The generic matches are candidates with explicit confidence and limitations;
 the tool never tests whether a token, account, card, response, or key is valid.
@@ -209,6 +211,16 @@ New stream offsets and connection epochs remain distinct attempts.
 HTTP/2 header compression, compressed request bodies, and multipart forms are
 not deeply decoded. Correctly encrypted payloads remain out
 of scope unless an authorized decrypted stream is supplied.
+
+File-signature findings report an observed body prefix, not a completed file
+transfer. The dedicated tracker uses Content-Length framing, inspects at most
+12 leading bytes for ordinary bodies or 2 KiB for the first multipart part,
+and stores no file body in the finding. It retains only bounded offsets and
+header metadata; the existing detector tail and optional raw PCAP ring remain
+subject to their separate retention settings. Binary bodies with a verified
+signature are excluded from credential-text interpretation. Chunked,
+close-delimited, compressed, HTTP/2 and encrypted bodies are not identified by
+this feature; observed limits are visible in `http_transfer_*` health counters.
 
 ## Kali installation
 
