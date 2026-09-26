@@ -12,13 +12,13 @@ project and its Windows-specific package.
 
 Download the source package and `SHA256SUMS.txt` from
 [GitHub Releases](https://github.com/KampaiDiscount/packet-inspector/releases).
-The current package is **0.1.4**, published as a **test prerelease** while
+The current package is **0.1.5**, published as a **test prerelease** while
 deployment-specific live-capture qualification remains required.
 
 | Asset | Purpose |
 | --- | --- |
-| `packet_audit-0.1.4.tar.gz` | Source distribution with the Kali installer, systemd units, configuration, documentation and tests; recommended for host installation. |
-| `packet_audit-0.1.4-py3-none-any.whl` | Python engine for an existing prepared environment. It does not install system packages, services or capture permissions. |
+| `packet_audit-0.1.5.tar.gz` | Source distribution with the Kali installer, systemd units, configuration, documentation and tests; recommended for host installation. |
+| `packet_audit-0.1.5-py3-none-any.whl` | Python engine for an existing prepared environment. It does not install system packages, services or capture permissions. |
 | `SHA256SUMS.txt` | SHA-256 hashes of the two attached package files. |
 
 Download both package files to check the complete manifest, then extract the
@@ -26,8 +26,8 @@ source distribution:
 
 ```bash
 sha256sum -c SHA256SUMS.txt
-tar -xzf packet_audit-0.1.4.tar.gz
-cd packet_audit-0.1.4
+tar -xzf packet_audit-0.1.5.tar.gz
+cd packet_audit-0.1.5
 sudo bash ./scripts/install-kali.sh
 ```
 

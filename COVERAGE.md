@@ -1,4 +1,4 @@
-# Protocol coverage: Packet Inspector 0.1.3
+# Protocol coverage: Packet Inspector 0.1.5
 
 Coverage describes wire formats, not a guarantee that every login is visible.
 The sensor needs the relevant traffic, both directions for correlation, and
@@ -46,6 +46,10 @@ global NTLM budgets. If a recognized SMB2 flow loses session framing, raw Type
 2/3 evidence is exported with a limitation; a paired hash is not guessed and a
 coverage counter marks the session incomplete. Unscoped raw NTLM correlation
 outside the SMB2 parser assumes sequential exchanges within one TCP epoch.
+Some test listeners leave SMB2 SessionId at zero. A sole challenge and response
+can still be associated within one TCP connection, with reduced confidence and
+an explicit limitation. Competing zero-ID challenges are left unpaired while raw
+Type 2/3 evidence and a coverage counter remain available.
 
 Redis and PostgreSQL use persistent frame-boundary cursors, so ordinary tail
 rotation does not rescan nested values as commands. Fields are bounded to

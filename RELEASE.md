@@ -1,4 +1,28 @@
-# Packet Inspector / Packet Audit 0.1.4 test prerelease
+# Packet Inspector / Packet Audit 0.1.5 test prerelease
+
+Package release date: 2026-09-26.
+
+- Fixes NetNTLMv1/v2 correlation for SMB2 listeners that retain a zero
+  SessionId through SESSION_SETUP, while refusing to guess between competing
+  zero-ID challenges. Raw challenge/response evidence remains available.
+- Preserves all packets in bounded offline replay by waiting for worker queue
+  capacity. Live capture continues to report overload rather than blocking.
+- Captures recognized outer VLAN tags by default on Ethernet and Linux cooked
+  links, so tagged IPv4/IPv6 can reach both analysis and the raw ring.
+- Validated against the controlled NXC-to-Responder capture, synthetic
+  concurrency/fragmentation/ambiguity cases, native libpcap VLAN fixtures and
+  the Kali test suite. The zero-ID pair has reduced confidence because the
+  listener did not provide a unique session identifier.
+
+Existing Kali installations retain an explicit `bpf` setting. Change the old
+`ip or ip6` setting to the 0.1.5 default after backing up the configuration;
+installing the package alone does not alter it. Encrypted, out-of-path, and
+unsupported protocols remain outside this release's coverage. Host-specific
+live traffic and sustained-load qualification remain required.
+
+---
+
+# Historical Packet Inspector / Packet Audit 0.1.4 test prerelease
 
 Package release date: 2026-09-17. Runtime fix committed: 2026-09-16.
 

@@ -1,5 +1,17 @@
 # Reliability and acceptance gate
 
+## What 0.1.5 changes
+
+- Correlates a single zero-SessionId SMB2 NTLM challenge and response within
+  one TCP connection, including delayed Type 2 reassembly. Competing challenges
+  remain unpaired and visible as an incomplete-coverage condition.
+- Offline replay waits for bounded worker queue capacity instead of dropping
+  packets under artificial replay speed. Live capture still exposes overload
+  through its loss counters and does not block the capture read loop.
+- The default capture filter admits recognized outer VLAN tags for both the
+  analyzer and independent raw ring. Existing explicit filters require a
+  configuration update; tagged non-IP traffic may increase capture load.
+
 ## What 0.1.4 changes
 
 - Capture uses bounded `next()` reads instead of native callback dispatch when
