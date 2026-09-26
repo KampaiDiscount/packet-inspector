@@ -1,4 +1,22 @@
-# Packet Inspector / Packet Audit 0.1.8 test prerelease
+# Packet Inspector / Packet Audit 0.1.9 test prerelease
+
+Package release date: 2026-09-26.
+
+- Prevents Luhn-valid HTTP `Range` and `Content-Range` byte offsets from being
+  classified as possible payment-card numbers. The exclusion applies only to
+  byte-offset spans inside those headers; card-shaped values elsewhere in a
+  message remain eligible for detection.
+- Replays preserved traffic from a former high-loss interval to verify the
+  false-positive correction against actual capture bytes. In the 153,725-frame
+  window, 36 card-candidate alerts were removed; independent packet inspection
+  located every one in a `Range` or `Content-Range` byte offset. The old
+  evidence is retained unchanged. The remaining card candidates require
+  contextual review. This classification fix does not recover packets lost by
+  the earlier live analyzer or claim universal content coverage.
+
+---
+
+# Historical Packet Inspector / Packet Audit 0.1.8 test prerelease
 
 Package release date: 2026-09-26.
 

@@ -1,5 +1,11 @@
 # Reliability and acceptance gate
 
+Version 0.1.9 excludes syntactically valid HTTP byte-range offsets from the
+payment-card candidate detector, after a historical capture showed Luhn-valid
+offsets creating false alarms. Header parsing is bounded; other card-shaped
+values remain subject to the ordinary detector. The first historical replay
+still has incomplete HTTP/TCP coverage, so its findings require context.
+
 ## What 0.1.7 and 0.1.8 change
 
 - Removes duplicate queued payload bytes for unfragmented TCP/UDP packets and
