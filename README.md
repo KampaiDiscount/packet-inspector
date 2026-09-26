@@ -12,13 +12,13 @@ project and its Windows-specific package.
 
 Download the source package and `SHA256SUMS.txt` from
 [GitHub Releases](https://github.com/KampaiDiscount/packet-inspector/releases).
-The current package is **0.1.9**, published as a **test prerelease** while
+The current package is **0.1.10**, published as a **test prerelease** while
 deployment-specific live-capture qualification remains required.
 
 | Asset | Purpose |
 | --- | --- |
-| `packet_audit-0.1.9.tar.gz` | Source distribution with the Kali installer, systemd units, configuration, documentation and tests; recommended for host installation. |
-| `packet_audit-0.1.9-py3-none-any.whl` | Python engine for an existing prepared environment. It does not install system packages, services or capture permissions. |
+| `packet_audit-0.1.10.tar.gz` | Source distribution with the Kali installer, systemd units, configuration, documentation and tests; recommended for host installation. |
+| `packet_audit-0.1.10-py3-none-any.whl` | Python engine for an existing prepared environment. It does not install system packages, services or capture permissions. |
 | `SHA256SUMS.txt` | SHA-256 hashes of the two attached package files. |
 
 Download both package files to check the complete manifest, then extract the
@@ -26,8 +26,8 @@ source distribution:
 
 ```bash
 sha256sum -c SHA256SUMS.txt
-tar -xzf packet_audit-0.1.9.tar.gz
-cd packet_audit-0.1.9
+tar -xzf packet_audit-0.1.10.tar.gz
+cd packet_audit-0.1.10
 sudo bash ./scripts/install-kali.sh
 ```
 
@@ -39,8 +39,9 @@ cd packet-inspector
 sudo bash ./scripts/install-kali.sh
 ```
 
-Review [release notes](RELEASE.md), [coverage](COVERAGE.md) and
-[qualification checks](RELIABILITY.md) before deployment. The installer
+Review [release notes](RELEASE.md), [coverage](COVERAGE.md),
+[qualification checks](RELIABILITY.md), and the
+[isolated burst results](QUALIFICATION_2026-09-26.md) before deployment. The installer
 prepares the host but does not start or enable capture; continue with the
 configuration and lifecycle instructions below. The native `pcapy-ng`
 dependency is built on Linux and is not bundled in the wheel.
@@ -166,11 +167,13 @@ reassembly bytes and 128 MiB for detector payload tails per worker, in addition
 to flow-count and per-direction limits. Evictions, trimming, gaps, fragment
 fallbacks, queue drops, parser errors, child restarts, stale progress, and
 writer acknowledgements all feed the final completeness verdict. The default
-queue holds at most 64 batches per worker; a batch contains at most 128 captured
-packets, and each worker queue also has an atomic 64 MiB payload reservation
-budget. Dispatch drops are counted when either the batch-count or byte budget is
-full. These are overload buffers, not claims that every traffic rate can be
-analysed without loss.
+analysis queue holds at most 2,048 buffered batches per worker; a batch
+contains at most 128 captured packets, and each worker queue also has an
+atomic 128 MiB captured-byte reservation budget. Dispatch drops are counted
+when either bound is reached. On the tested Kali forwarding path, opting into
+forwarded-copy suppression reduced queue pressure in a bounded burst; it
+remains off by default for other topologies. These are finite buffers, not a
+claim that every traffic rate can be analysed without loss.
 
 ## Detection coverage
 
@@ -192,10 +195,13 @@ packet keyword search. Implemented families are:
 - Redis RESP/inline AUTH and HELLO AUTH on port 6379; PostgreSQL password
   messages on port 5432 (confirmed plaintext only with a server cleartext
   authentication request, otherwise explicitly method-unknown);
+- initial cleartext SOCKS5 username/password exchange on port 1080 and MQTT
+  3.1.1/5.0 CONNECT passwords on port 1883; MQTT 5 Authentication Data is a
+  separately labeled candidate, not a password or login-success claim;
 - Kerberos AS-REQ etype 23 mode 7500 and SIP Digest mode 11400 when the required
   fields are complete;
 - JWTs, selected cloud/source-control/chat/payment token formats, named secret
-  assignments, PEM private keys, and Luhn-valid payment-card candidates.
+  assignments, PEM private keys, and Luhn-valid payment-card candidates;
 - clear HTTP/1 request/response bodies whose first bytes match PNG, JPEG, GIF,
   WebP, PDF or ZIP signatures, with packet provenance and metadata-only findings.
 
@@ -351,6 +357,15 @@ control capture if that is suspected.
 ## Exact live lifecycle
 
 For a simple interface name such as `eth0`:
+
+On the prepared Kali host, the versioned `scripts/packet-audit-start.sh` and
+`scripts/packet-audit-stop.sh` can be installed as
+`/root/packet-audit-start.sh` and `/root/packet-audit-stop.sh` with mode `0700`.
+They control only the capture and loopback dashboard services; they do not
+start or stop ARP interception. The start script reports service readiness,
+while the dashboard's capture-health banner reports evidence loss separately.
+The stop script waits for the final capture verdict and exits with code 3 when
+the finished session was incomplete.
 
 ```bash
 sudo systemctl start packet-audit@eth0.service

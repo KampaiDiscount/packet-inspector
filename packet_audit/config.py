@@ -21,6 +21,7 @@ _CONFIG_SECTION_KEYS: dict[str, frozenset[str]] = {
             "promiscuous",
             "read_timeout_ms",
             "capture_batch_size",
+            "forwarded_duplicate_suppression",
         }
     ),
     "analysis": frozenset(
@@ -82,7 +83,7 @@ class AuditConfig:
     workers: int = max(1, min(8, (os.cpu_count() or 2) - 1))
     # Slots are batches, and a single high-volume flow always uses one worker.
     # Allow a short transfer burst to queue without removing the finite cap.
-    queue_size: int = 1024
+    queue_size: int = 2048
     max_worker_queue_bytes: int = 128 * 1024 * 1024
     snaplen: int = 262_144
     capture_buffer_mb: int = 128
@@ -112,6 +113,9 @@ class AuditConfig:
     generic_secret_scan: bool = True
     credit_card_scan: bool = True
     capture_batch_size: int = 128
+    # Opt-in: skip only a proven second forwarded frame when one worker queue
+    # is under pressure and its ingress copy was accepted for analysis.
+    forwarded_duplicate_suppression: bool = False
     extra_sensitive_field_names: tuple[str, ...] = ()
 
     @classmethod
@@ -208,6 +212,7 @@ class AuditConfig:
             "stop_on_raw_capture_failure",
             "generic_secret_scan",
             "credit_card_scan",
+            "forwarded_duplicate_suppression",
         ):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be true or false")

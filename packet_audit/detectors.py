@@ -36,6 +36,11 @@ from .http_forms import HTTPFramer, Message as HTTPMessage, field_role, form_fie
 from .http_transfers import HTTPTransferTracker, transfer_candidate_in
 from .ntlm_wrappers import smb2_header_seen, smb2_session_for_token, unwrap_ntlm
 from .cleartext import scan_redis, scan_postgres, scan_postgres_authentication
+from .socks5 import display_value as socks5_display_value, parse_socks5_auth
+from .mqtt import (
+    MAX_CONNECT_BYTES as MAX_MQTT_CONNECT_BYTES, MQTTConnectLimit,
+    MalformedMQTT, display_binary as mqtt_display_binary, parse_mqtt_connect,
+)
 
 
 _MAX_BINARY_MESSAGE = 1 << 20
@@ -290,6 +295,7 @@ class _FlowState:
     ntlm_zero_session_last_type3_ns: int = 0
     cleartext_cursors: dict[int, int] = field(default_factory=dict)
     cleartext_blocked: set[int] = field(default_factory=set)
+    mqtt_connect_done: bool = False
     postgres_method: int | None = None
     smtp_pending: dict[int, dict[str, Any]] = field(default_factory=dict)
     imap_pending: dict[int, dict[str, Any]] = field(default_factory=dict)
@@ -305,6 +311,7 @@ class _FlowState:
     http_framers: dict[int, HTTPFramer] = field(default_factory=dict)
     http_transfer_trackers: dict[int, HTTPTransferTracker] = field(default_factory=dict)
     http2_transfer_seen: set[int] = field(default_factory=set)
+    tls_opaque_seen: bool = False
     generic_pending: dict[int, bool] = field(default_factory=dict)
     last_timestamp_ns: int = 0
     last_activity_ns: int = 0
@@ -669,7 +676,7 @@ class SensitiveDetector:
             ],
         }
         for key, value in self._stats.items():
-            if key.startswith(("parser_error:", "http_", "coverage_")):
+            if key.startswith(("parser_error:", "http_", "coverage_", "tls_opaque_")):
                 result[key] = value
         result["coverage_cleartext_pending_frames"] = pending_cleartext
         result["coverage_ntlm_unmatched_responses"] = sum(len(state.ntlm_responses) for state in self._flows.values())
@@ -1693,6 +1700,41 @@ class SensitiveDetector:
         findings: list[Finding] = []
         framed_http = False
         if not datagram and ctx.data and ctx.base_offset is not None:
+            # A validated TLS handshake or complete ApplicationData record at
+            # stream origin makes subsequent payload opaque in both directions.
+            # The latter also handles captures that start after the handshake.
+            # Keep a plausible partial record pending so its bytes are not
+            # parsed as cleartext before reassembly completes.
+            if not state.tls_opaque_seen and ctx.base_offset == 0 and len(ctx.data) >= 5:
+                record_type = ctx.data[0]
+                record_length = int.from_bytes(ctx.data[3:5], "big")
+                record_shape = (
+                    ctx.data[1] == 0x03
+                    and ctx.data[2] <= 0x04
+                    and (
+                        (record_type == 0x16 and 6 <= record_length <= 0x4000)
+                        or (record_type == 0x17 and 0 <= record_length <= 0x4800)
+                    )
+                )
+                if record_shape and len(ctx.data) < 5 + record_length:
+                    return []
+                if record_shape and record_type == 0x17:
+                    state.tls_opaque_seen = True
+                    self._stats["tls_opaque_flows"] += 1
+                    self._stats["tls_opaque_midstream_flows"] += 1
+                elif (
+                    record_shape
+                    and len(ctx.data) >= 11
+                    and ctx.data[5] in (0x01, 0x02)
+                    and int.from_bytes(ctx.data[6:9], "big") >= 2
+                    and ctx.data[9] == 0x03
+                    and ctx.data[10] <= 0x04
+                ):
+                    state.tls_opaque_seen = True
+                    self._stats["tls_opaque_flows"] += 1
+            if state.tls_opaque_seen:
+                self._stats["tls_opaque_chunks"] += 1
+                return []
             if (
                 ctx.direction not in state.http2_transfer_seen
                 and b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" in ctx.data[
@@ -1767,6 +1809,8 @@ class SensitiveDetector:
             self._scan_http,
             self._scan_line_protocols,
             self._scan_cleartext,
+            self._scan_socks5,
+            self._scan_mqtt,
             self._scan_ldap,
             self._scan_mssql,
             self._scan_kerberos,
@@ -1784,6 +1828,8 @@ class SensitiveDetector:
             "_scan_ntlm_encoded": min(self.overlap_bytes, 16 * 1024 + 128),
             "_scan_http": 512,
             "_scan_line_protocols": 256,
+            "_scan_socks5": 770,
+            "_scan_mqtt": min(self.overlap_bytes, MAX_MQTT_CONNECT_BYTES),
             "_scan_ldap": min(self.overlap_bytes, 64 * 1024),
             "_scan_mssql": min(self.overlap_bytes, 64 * 1024),
             "_scan_kerberos": min(self.overlap_bytes, 64 * 1024),
@@ -1874,6 +1920,16 @@ class SensitiveDetector:
             return bool(ports & {25, 110, 143, 587})
         if scanner_name == "_scan_cleartext":
             return bool(ports & {5432, 6379}) and not ctx.is_datagram
+        if scanner_name == "_scan_socks5":
+            return 1080 in ports and not ctx.is_datagram
+        if scanner_name == "_scan_mqtt":
+            if state.mqtt_connect_done or ctx.is_datagram:
+                return False
+            source, destination = (
+                (ctx.flow.endpoint_a, ctx.flow.endpoint_b)
+                if ctx.direction == 0 else (ctx.flow.endpoint_b, ctx.flow.endpoint_a)
+            )
+            return destination.port == 1883 and source.port != 1883
         if scanner_name == "_scan_http":
             if state.http_pending.get(ctx.direction, False):
                 return True
@@ -1897,6 +1953,8 @@ class SensitiveDetector:
             start, end = self._scanner_range(ctx, state, scanner_name, 64)
             return ctx.data.find(b"\x60", start, end) >= 0
         if scanner_name == "_scan_mssql":
+            if state.tls_opaque_seen:
+                return False
             if 1433 in ports:
                 return True
             start, end = self._scanner_range(ctx, state, scanner_name, 8)
@@ -3328,6 +3386,140 @@ class SensitiveDetector:
 
     # -- bounded binary protocols ---------------------------------------
 
+    def _scan_mqtt(self, ctx: _ScanContext, state: _FlowState) -> list[Finding]:
+        """Inspect only a complete initial MQTT CONNECT on clear TCP 1883."""
+        if ctx.is_datagram or state.mqtt_connect_done or ctx.base_offset is None:
+            return []
+        if ctx.base_offset != 0:
+            state.mqtt_connect_done = True
+            self._stats["coverage_mqtt_connect_stream_origin_missing"] += 1
+            return []
+        try:
+            connect = parse_mqtt_connect(ctx.data)
+        except MQTTConnectLimit:
+            state.mqtt_connect_done = True
+            self._stats["coverage_mqtt_connect_frame_limit"] += 1
+            return []
+        except MalformedMQTT:
+            state.mqtt_connect_done = True
+            self._stats["coverage_mqtt_connect_malformed"] += 1
+            return []
+        if connect is None:
+            return []
+        state.mqtt_connect_done = True
+        findings: list[Finding] = []
+        if connect.password is not None:
+            assert connect.credential_start is not None
+            assert connect.credential_end is not None
+            finding = self._emit(
+                ctx, state, detector="mqtt_connect_username_password",
+                start=connect.credential_start, end=connect.credential_end,
+                category="credential", protocol="mqtt",
+                material_type="mqtt_connect_credentials",
+                material={
+                    "mqtt_version": "3.1.1" if connect.version == 4 else "5.0",
+                    "client_id": connect.client_id,
+                    "username": connect.username,
+                    "password": mqtt_display_binary(connect.password),
+                },
+                limitations=[
+                    "Observed CONNECT submission; broker authentication outcome was not established.",
+                    "The MQTT Password field is binary and may carry a token or other credential rather than an account password.",
+                ],
+            )
+            if finding is not None:
+                findings.append(finding)
+        if connect.authentication_data:
+            assert connect.authentication_method_span is not None
+            assert connect.authentication_data_span is not None
+            provenance = [
+                self._provenance_for_span(ctx, *span)
+                for span in sorted(
+                    (connect.authentication_method_span,
+                     connect.authentication_data_span),
+                )
+            ]
+            packet_ids, packet_ids_complete = self._combine_provenance(
+                *provenance,
+            )
+            finding = self._emit(
+                ctx, state, detector="mqtt_connect_authentication_data",
+                start=connect.authentication_data_span[0],
+                end=connect.authentication_data_span[1],
+                category="credential", protocol="mqtt",
+                material_type="mqtt_connect_authentication_data",
+                material={
+                    "mqtt_version": "5.0", "client_id": connect.client_id,
+                    "authentication_method": connect.authentication_method,
+                    "authentication_data": mqtt_display_binary(
+                        connect.authentication_data,
+                    ),
+                },
+                confidence="medium",
+                limitations=[
+                    "Authentication Data is method-defined and may be a public nonce or challenge rather than a secret or reusable credential.",
+                    "The CONNECT alone does not establish successful authentication; later AUTH and CONNACK exchanges were not interpreted.",
+                ],
+                packet_ids_override=packet_ids,
+                packet_ids_complete_override=packet_ids_complete,
+            )
+            if finding is not None:
+                findings.append(finding)
+        return findings
+
+    def _scan_socks5(self, ctx: _ScanContext, state: _FlowState) -> list[Finding]:
+        """Parse an initial RFC 1929 request only after method 0x02 selection."""
+        if ctx.is_datagram or state.attempts["socks5_credentials"]:
+            return []
+        if ctx.flow.endpoint_a.port == 1080 and ctx.flow.endpoint_b.port != 1080:
+            server_direction = 0
+        elif ctx.flow.endpoint_b.port == 1080 and ctx.flow.endpoint_a.port != 1080:
+            server_direction = 1
+        else:
+            return []
+        client_direction = 1 - server_direction
+        client = state.directions.get(client_direction)
+        server = state.directions.get(server_direction)
+        if (
+            client is None or server is None
+            or client.base_offset != 0 or server.base_offset != 0
+        ):
+            return []
+        request = parse_socks5_auth(client.data, server.data)
+        if request is None:
+            return []
+        matching_spans = [
+            span for span in client.provenance_spans
+            if span.stream_end > request.start and span.stream_start < request.end
+        ]
+        # The two capture directions can arrive out of observation order.
+        # Use the client's retained byte provenance even when the server's
+        # method selection is the packet that completes our evidence. A capped
+        # or ambiguous client span must not inherit the server context's flag.
+        client_ctx = replace(
+            ctx, direction=client_direction, base_offset=0, data=client.data,
+            packet_ids=client.packet_ids,
+            provenance_spans=client.provenance_spans,
+            packet_ids_complete=bool(matching_spans) and all(
+                span.packet_ids_complete for span in matching_spans
+            ),
+        )
+        finding = self._emit(
+            client_ctx, state, detector="socks5_username_password",
+            start=request.start, end=request.end,
+            category="credential", protocol="socks5",
+            material_type="socks5_credentials",
+            material={
+                "username": socks5_display_value(request.username),
+                "password": socks5_display_value(request.password),
+                "method": "username_password",
+            },
+            limitations=[
+                "Observed cleartext submission; server authentication outcome was not established."
+            ],
+        )
+        return [finding] if finding is not None else []
+
     def _scan_cleartext(self, ctx: _ScanContext, state: _FlowState) -> list[Finding]:
         """Framed cleartext database commands, preserving cursors across tails."""
         if ctx.base_offset is None or ctx.direction in state.cleartext_blocked:
@@ -3466,6 +3658,9 @@ class SensitiveDetector:
             return None
         offset = int.from_bytes(payload[offset_pos : offset_pos + 2], "little")
         chars = int.from_bytes(payload[offset_pos + 2 : offset_pos + 4], "little")
+        if chars == 0:
+            # LOGIN7 ignores the offset of an omitted field.
+            return b""
         length = chars * 2
         if offset > len(payload) or length > 65535 or offset + length > len(payload):
             return None
@@ -3483,19 +3678,47 @@ class SensitiveDetector:
                 pos = next_pos
                 continue
             packet_length = int.from_bytes(data[pos + 2 : pos + 4], "big")
-            if packet_length < 8 + 94 or packet_length > _MAX_BINARY_MESSAGE or pos + packet_length > len(data):
+            # MS-TDS packet Length includes the 8-byte header and is bounded
+            # to 512..32767 bytes.
+            if packet_length < 512 or packet_length > 32767 or pos + packet_length > len(data):
                 pos += 1
                 continue
             payload = data[pos + 8 : pos + packet_length]
             declared = int.from_bytes(payload[0:4], "little")
-            if declared < 94 or declared > len(payload):
+            # This parser supports a complete LOGIN7 contained in one TDS
+            # packet. The EOM flag and exact stream length are required for
+            # that shape; incomplete or padded candidates are not evidence.
+            if not (data[pos + 1] & 0x01) or declared != len(payload):
+                pos += packet_length
+                continue
+            version = int.from_bytes(payload[4:8], "little")
+            requested_packet_size = int.from_bytes(payload[8:12], "little")
+            hostname_offset = int.from_bytes(payload[36:38], "little")
+            if not (
+                0x70 <= version >> 24 <= 0x7F
+                and 512 <= requested_packet_size <= 32767
+                and 94 <= hostname_offset <= declared
+            ):
                 pos += packet_length
                 continue
             username_raw = self._tds_utf16_field(payload, 40)
             password_enc = self._tds_utf16_field(payload, 44)
             hostname_raw = self._tds_utf16_field(payload, 36)
             database_raw = self._tds_utf16_field(payload, 68)
-            if username_raw is None or password_enc is None or not password_enc:
+            if None in (username_raw, password_enc, hostname_raw, database_raw) or not password_enc:
+                pos += packet_length
+                continue
+            username_offset = int.from_bytes(payload[40:42], "little")
+            password_offset = int.from_bytes(payload[44:46], "little")
+            if (
+                (username_raw and username_offset < hostname_offset)
+                or password_offset < hostname_offset
+                or (
+                    username_raw
+                    and username_offset < password_offset + len(password_enc)
+                    and password_offset < username_offset + len(username_raw)
+                )
+            ):
                 pos += packet_length
                 continue
             password_raw = bytes(

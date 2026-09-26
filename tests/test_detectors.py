@@ -1027,6 +1027,8 @@ def _obfuscate_tds_password(raw: bytes) -> bytes:
 
 def tds_login7(username: str, password: str, hostname: str = "WS01", database: str = "audit") -> bytes:
     payload = bytearray(94)
+    payload[4:8] = (0x74000004).to_bytes(4, "little")
+    payload[8:12] = (4096).to_bytes(4, "little")
 
     def put(position: int, text: str, *, password_field: bool = False) -> None:
         raw = text.encode("utf-16le")
@@ -1040,6 +1042,7 @@ def tds_login7(username: str, password: str, hostname: str = "WS01", database: s
     put(40, username)
     put(44, password, password_field=True)
     put(68, database)
+    payload.extend(b"\x00" * max(0, 504 - len(payload)))
     payload[0:4] = len(payload).to_bytes(4, "little")
     packet_length = len(payload) + 8
     header = bytes([0x10, 0x01]) + packet_length.to_bytes(2, "big") + b"\x00\x00\x01\x00"
@@ -1054,6 +1057,58 @@ def test_mssql_login7_password_deobfuscation() -> None:
     assert login.material["username"] == "sa-auditor"
     assert login.material["password"] == "SqlSecret!42"
     assert login.material["hostname"] == "WS01"
+
+
+def test_mssql_login7_omitted_fields_keep_required_hostname_offset() -> None:
+    packet = bytearray(tds_login7("", "fixture-password", hostname="", database=""))
+    # Offsets for zero-length fields other than ibHostName are ignored.
+    packet[8 + 40 : 8 + 42] = (0).to_bytes(2, "little")
+    findings = SensitiveDetector("session").process_stream(
+        chunk(bytes(packet), target_flow=flow(40000, 1433))
+    )
+    login = by_type(findings, "mssql_login7_credentials")[0]
+    assert login.material["username"] == ""
+    assert login.material["password"] == "fixture-password"
+
+    # ibHostName must still point to the start of variable data when empty.
+    packet[8 + 36 : 8 + 38] = (0).to_bytes(2, "little")
+    malformed = SensitiveDetector("session").process_stream(
+        chunk(bytes(packet), target_flow=flow(40000, 1433))
+    )
+    assert not by_type(malformed, "mssql_login7_credentials")
+
+
+def test_mssql_login7_rejects_oversize_false_packet() -> None:
+    # Ciphertext can accidentally satisfy the weak Login7 offset checks. A
+    # TDS header above the protocol's 32767-byte limit must never emit.
+    candidate = bytearray(tds_login7("fixture-user", "fixture-password"))
+    candidate.extend(b"\x00" * (32768 - len(candidate)))
+    candidate[2:4] = (32768).to_bytes(2, "big")
+    candidate[8:12] = (32760).to_bytes(4, "little")
+    findings = SensitiveDetector("session").process_stream(
+        chunk(bytes(candidate), target_flow=flow(60245, 443))
+    )
+    assert not by_type(findings, "mssql_login7_credentials")
+
+
+def test_mssql_login7_ignores_tls_application_bytes_on_any_port() -> None:
+    detector = SensitiveDetector("session")
+    target_flow = flow(60245, 443)
+    handshake = b"\x01\x00\x00\x20\x03\x03" + b"\x00" * 30
+    hello = b"\x16\x03\x03" + len(handshake).to_bytes(2, "big") + handshake
+    detector.process_stream(chunk(hello, target_flow=target_flow, direction=0))
+    apparent_login = tds_login7("fixture-user", "fixture-password")
+    tls_record = b"\x17\x03\x03" + len(apparent_login).to_bytes(2, "big") + apparent_login
+    findings = detector.process_stream(
+        chunk(tls_record, target_flow=target_flow, direction=1)
+    )
+    assert not by_type(findings, "mssql_login7_credentials")
+
+    # A real cleartext Login7 remains detectable on a nonstandard port.
+    cleartext = SensitiveDetector("session").process_stream(
+        chunk(apparent_login, target_flow=target_flow)
+    )
+    assert len(by_type(cleartext, "mssql_login7_credentials")) == 1
 
 
 def kerberos_as_req(user: str, realm: str, cipher: bytes) -> bytes:

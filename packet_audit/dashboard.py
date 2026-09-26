@@ -352,13 +352,14 @@ HTML = """<!doctype html>
 <title>Packet Audit · Live evidence</title><link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script></head>
 <body><header><div><p class="eyebrow">PACKET AUDIT</p><h1>Live evidence</h1><p>Local, read-only view · sensitive material is unredacted</p></div><span id="connection" class="badge">Locked</span></header>
 <main><section id="login"><label for="token">Dashboard access token</label><div class="controls"><input id="token" type="password" autocomplete="off" placeholder="Paste the private dashboard token"><button id="connect">Connect</button></div><p>Access through your SSH tunnel. The token stays in this page's memory only.</p></section>
-<section class="metrics" aria-label="Capture health"><article><span>Capture heartbeat</span><strong id="heartbeat">Unknown</strong></article><article><span>Captured packets</span><strong id="packets">—</strong></article><article><span>Reported drops</span><strong id="drops">—</strong></article><article><span>Worker restarts</span><strong id="restarts">—</strong></article></section>
+<p id="capture-status" class="capture-state capture-unknown" role="status" aria-live="polite">Capture health unknown · waiting for a heartbeat.</p>
+<section class="metrics" aria-label="Capture health"><article><span>Capture heartbeat</span><strong id="heartbeat">Unknown</strong></article><article><span>Captured packets</span><strong id="packets">—</strong></article><article><span>Reported drops</span><strong id="drops">—</strong></article><article><span>Analysis backlog</span><strong id="backlog">—</strong></article><article><span>Worker restarts</span><strong id="restarts">—</strong></article></section>
 <section><div class="controls"><input id="search" type="search" aria-label="Filter findings" placeholder="Filter by IP, protocol, detector or material"><select id="detector" aria-label="Detector"><option value="">All detectors</option></select><button id="pause">Pause view</button></div><p id="summary" aria-live="polite">Waiting for access token.</p><p id="notice" class="notice">Recent bounded view: up to 500 findings and a 1 MiB read window. The JSONL files remain the full export; dashboard limits never suppress capture.</p>
 <div class="table-wrap"><table><thead><tr><th>Observed time</th><th>Protocol / detector</th><th>Source IP:port</th><th>Destination IP:port</th><th>Sensitive material</th><th>Attempt / quality</th></tr></thead><tbody id="findings"></tbody></table></div></section>
 <details><summary>Operational events &amp; health details</summary><pre id="operations">No operational events loaded.</pre></details>
 </main><footer>Read-only • no external services • encrypted HTTPS payloads are not decrypted</footer></body></html>"""
 
-CSS = """:root{color-scheme:dark;font:15px/1.5 system-ui,sans-serif;background:#0b1220;color:#e6edf6}*{box-sizing:border-box}body{margin:0}header{padding:30px 4vw;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2b3b50;background:#101c2d}h1{font-size:32px;letter-spacing:-1px;margin:0}.eyebrow{color:#6edccc;font-size:12px;font-weight:800;letter-spacing:2px;margin:0}header p{margin:8px 0 0;color:#a8b8cc}main{padding:24px 4vw;max-width:1900px;margin:auto}section,details{margin-bottom:24px}.badge{padding:6px 13px;border:1px solid #486179;border-radius:30px;color:#b1c8da}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.metrics article{background:#121f31;padding:18px;border:1px solid #283e53;border-radius:10px}.metrics span{display:block;color:#9faec2;font-size:13px}.metrics strong{display:block;font-size:25px;margin-top:6px}.controls{display:flex;gap:10px;margin-top:10px}input,select,button{border:1px solid #3a526d;background:#13243a;color:#e6edf6;border-radius:6px;padding:10px 12px;font:inherit}input{flex:1;min-width:0}button{cursor:pointer;background:#185b60}input:focus,select:focus,button:focus{outline:2px solid #74e7d1;outline-offset:2px}#summary{color:#b8c8db}.notice,#login p,footer{font-size:12px;color:#9badc2}.table-wrap{overflow:auto;border:1px solid #2b3b50;border-radius:8px}table{border-collapse:collapse;width:100%;font-size:13px}th{text-align:left;color:#9cafc4;background:#152437;padding:13px;white-space:nowrap}td{padding:13px;border-top:1px solid #293b50;vertical-align:top;max-width:500px;overflow-wrap:anywhere}td pre{white-space:pre-wrap;margin:0;font:12px/1.6 ui-monospace,monospace;max-height:240px;overflow:auto}tbody tr:hover{background:#14243a}td small{display:block;color:#a4b7cc}#operations{font-size:12px;max-height:400px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#111f31;padding:18px}footer{padding:0 4vw 24px}summary{cursor:pointer;color:#b5c6da}@media(max-width:850px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.controls{flex-wrap:wrap}header{align-items:flex-start;gap:15px}.metrics strong{font-size:21px}}"""
+CSS = """:root{color-scheme:dark;font:15px/1.5 system-ui,sans-serif;background:#0b1220;color:#e6edf6}*{box-sizing:border-box}body{margin:0}header{padding:30px 4vw;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2b3b50;background:#101c2d}h1{font-size:32px;letter-spacing:-1px;margin:0}.eyebrow{color:#6edccc;font-size:12px;font-weight:800;letter-spacing:2px;margin:0}header p{margin:8px 0 0;color:#a8b8cc}main{padding:24px 4vw;max-width:1900px;margin:auto}section,details{margin-bottom:24px}.badge{padding:6px 13px;border:1px solid #486179;border-radius:30px;color:#b1c8da}.capture-state{padding:14px 18px;border:1px solid #63758c;border-radius:8px;font-weight:700}.capture-unknown{background:#273244;color:#d6e0ee}.capture-ok{background:#123d35;border-color:#277c68;color:#bdf4df}.capture-warn{background:#4b3917;border-color:#b89a4b;color:#ffe7ae}.capture-bad{background:#552421;border-color:#b75d52;color:#ffe0d9}.metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.metrics article{background:#121f31;padding:18px;border:1px solid #283e53;border-radius:10px}.metrics span{display:block;color:#9faec2;font-size:13px}.metrics strong{display:block;font-size:25px;margin-top:6px}.controls{display:flex;gap:10px;margin-top:10px}input,select,button{border:1px solid #3a526d;background:#13243a;color:#e6edf6;border-radius:6px;padding:10px 12px;font:inherit}input{flex:1;min-width:0}button{cursor:pointer;background:#185b60}input:focus,select:focus,button:focus{outline:2px solid #74e7d1;outline-offset:2px}#summary{color:#b8c8db}.notice,#login p,footer{font-size:12px;color:#9badc2}.table-wrap{overflow:auto;border:1px solid #2b3b50;border-radius:8px}table{border-collapse:collapse;width:100%;font-size:13px}th{text-align:left;color:#9cafc4;background:#152437;padding:13px;white-space:nowrap}td{padding:13px;border-top:1px solid #293b50;vertical-align:top;max-width:500px;overflow-wrap:anywhere}td pre{white-space:pre-wrap;margin:0;font:12px/1.6 ui-monospace,monospace;max-height:240px;overflow:auto}tbody tr:hover{background:#14243a}td small{display:block;color:#a4b7cc}#operations{font-size:12px;max-height:400px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#111f31;padding:18px}footer{padding:0 4vw 24px}summary{cursor:pointer;color:#b5c6da}@media(max-width:1000px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.controls{flex-wrap:wrap}header{align-items:flex-start;gap:15px}.metrics strong{font-size:21px}}"""
 
 JS = """'use strict';
 (() => {
@@ -382,6 +383,35 @@ JS = """'use strict';
     if(start>0) bounded=true;
     return entries.slice(start);
   }
+  function captureStatus(age, ended) {
+    if(ended) return ['bad','Capture stopped or ended · current coverage is unavailable.'];
+    if(age===null) return ['unknown','Capture health unknown · waiting for a heartbeat.'];
+    if(age>35) return ['bad','Capture heartbeat is stale · current coverage is unknown.'];
+    const h=lastHeartbeat;
+    const names=['userspace_queue_drops','libpcap_dropped','interface_dropped'];
+    const known=names.map(n=>h[n]).filter(v=>typeof v==='number');
+    const dropped=known.reduce((a,b)=>a+b,0);
+    const parseErrors=Number(h.capture_parse_errors || 0);
+    const opsDropped=Number(h.operational_queue_drops || 0);
+    const restarts=Number(h.worker_restarts || 0);
+    if(dropped || parseErrors || opsDropped || restarts) {
+      const reasons=[];
+      if(dropped) reasons.push(dropped.toLocaleString()+' packet drops');
+      if(parseErrors) reasons.push(parseErrors.toLocaleString()+' parse errors');
+      if(opsDropped) reasons.push(opsDropped.toLocaleString()+' lost health events');
+      if(restarts) reasons.push(restarts.toLocaleString()+' worker restarts');
+      return ['bad','Coverage incomplete this session · '+reasons.join(', ')+'.'];
+    }
+    if(known.length<names.length) return ['unknown','Capture health uncertain · one or more drop counters are unavailable.'];
+    const q=h.worker_queue_byte_health || {};
+    const batches=Array.isArray(q.outstanding_batches_by_worker) ? Math.max(0,...q.outstanding_batches_by_worker) : 0;
+    const bytes=Array.isArray(q.current_bytes_by_worker) ? Math.max(0,...q.current_bytes_by_worker) : 0;
+    const slotLimit=Number(q.max_outstanding_batches_per_worker || 0);
+    const byteLimit=Number(q.max_bytes_per_worker || 0);
+    if((slotLimit && batches/slotLimit>=0.2) || (byteLimit && bytes/byteLimit>=0.2))
+      return ['warn','Analysis is backlogged · findings may arrive late ('+batches.toLocaleString()+' batches on busiest worker).'];
+    return ['ok','No reported capture loss so far · encrypted and unsupported traffic remains outside coverage.'];
+  }
   function render() {
     const selected=$('detector').value;
     const detectors=[...new Set(rows.map(r=>String(r.detector || 'unknown')))].sort();
@@ -404,12 +434,17 @@ JS = """'use strict';
     $('operations').textContent=operations.slice(-30).reverse().map(r=>JSON.stringify(r,null,2)).join('\\n\\n') || 'No operational events loaded.';
     const age=lastHeartbeat ? Math.max(0,Date.now()-Number(lastHeartbeat.timestamp_ns)/1e6)/1000 : null;
     const ended=lastCaptureEvent && ['session_stopped','session_error','session_finished','capture_stopped'].includes(lastCaptureEvent.event);
+    const [severity,message]=captureStatus(age,ended);
+    $('capture-status').className='capture-state capture-'+severity;
+    $('capture-status').textContent=message;
     $('heartbeat').textContent=ended ? 'Stopped / ended' : age===null ? 'Unknown' : (age>35?'Stale · ':'')+Math.floor(age)+'s ago';
     $('packets').textContent=lastHeartbeat?.captured_packets?.toLocaleString() ?? '—';
     if(lastHeartbeat) {
       const names=['userspace_queue_drops','libpcap_dropped','interface_dropped'];
       const known=names.map(n=>lastHeartbeat[n]).filter(v=>typeof v==='number');
       $('drops').textContent=known.length ? known.reduce((a,b)=>a+b,0).toLocaleString()+(known.length<3?' (partial)':'') : 'Unknown';
+      const batches=lastHeartbeat.worker_queue_byte_health?.outstanding_batches_by_worker;
+      $('backlog').textContent=Array.isArray(batches) ? Math.max(0,...batches).toLocaleString()+' batches' : 'Unknown';
       $('restarts').textContent=lastHeartbeat.worker_restarts ?? '—';
     }
   }
@@ -432,7 +467,7 @@ JS = """'use strict';
   async function poll() {
     if(busy || paused || (requireToken && !token)) return; busy=true; more=false; missing=false;
     try { await page('findings'); await page('operations'); $('connection').textContent='Connected · local'; if(requireToken) $('login').hidden=true; render(); }
-    catch(error) {$('connection').textContent='Disconnected';$('summary').textContent=error.message;if(requireToken) $('login').hidden=false;}
+    catch(error) {$('connection').textContent='Disconnected';$('capture-status').className='capture-state capture-unknown';$('capture-status').textContent='Capture health unavailable · dashboard disconnected.';$('summary').textContent=error.message;if(requireToken) $('login').hidden=false;}
     finally {busy=false;}
   }
   if(requireToken) {
@@ -441,5 +476,5 @@ JS = """'use strict';
   }
   $('pause').addEventListener('click',()=>{paused=!paused;$('pause').textContent=paused?'Resume view':'Pause view';render();if(!paused)poll();});
   $('search').addEventListener('input',render);$('detector').addEventListener('change',render);
-  setInterval(poll,2000);poll();
+  setInterval(()=>{if(paused) render(); else poll();},2000);poll();
 })();"""

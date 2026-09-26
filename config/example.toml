@@ -2,13 +2,15 @@
 interface = "eth0"
 bpf = "ip or ip6 or link[12:2] = 0x8100 or link[12:2] = 0x88a8 or link[12:2] = 0x9100 or link[12:2] = 0x9200 or link[14:2] = 0x8100 or link[14:2] = 0x88a8 or link[14:2] = 0x9100 or link[14:2] = 0x9200 or link[0:2] = 0x8100 or link[0:2] = 0x88a8 or link[0:2] = 0x9100 or link[0:2] = 0x9200"
 workers = 4
-queue_size = 1024
+queue_size = 2048
 max_worker_queue_bytes = 134217728
 snaplen = 262144
 capture_buffer_mb = 128
 promiscuous = true
 read_timeout_ms = 100
 capture_batch_size = 128
+# Opt in only on a measured same-interface forwarding path; raw PCAP keeps both views.
+forwarded_duplicate_suppression = false
 
 [analysis]
 flow_idle_seconds = 300
