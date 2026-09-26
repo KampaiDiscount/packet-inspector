@@ -1,4 +1,33 @@
-# Packet Inspector / Packet Audit 0.1.6 test prerelease
+# Packet Inspector / Packet Audit 0.1.7 test prerelease
+
+Package release date: 2026-09-26.
+
+- Prevents a duplicate copy of each unfragmented TCP/UDP payload from crossing
+  the worker queue. Necessary literal and BER-tag prefilters avoid expensive
+  HTTP and LDAP parsing on unrelated binary bytes without suppressing their
+  supported signatures.
+- Raises the bounded defaults to 1,024 batch slots and 128 MiB of captured
+  bytes per worker. Queue-slot, byte-budget, occupancy and capture-loop timing
+  counters expose pressure; overload still forces an incomplete verdict.
+- A controlled Win11-to-Linode 48 MiB HTTP transfer through the Kali ARP path
+  exposed live-analysis queue loss in 0.1.6. The fixed build captured and
+  dispatched 87,144 packets with zero reported capture or analysis drops, zero
+  parser errors and a complete final verdict. Its 40 test-flow findings matched
+  a replay of the new independent PCAP by detector and observed time. Separate
+  strict replays of the original 85,656-frame stress capture, the new capture,
+  and the earlier 188-frame qualification capture passed their expected counts.
+
+Existing installations retain explicit queue settings in `/etc`. Installing
+0.1.7 alone does not enlarge those settings: back up and review the host config
+before adopting the new bounds. This finite burst result is not a sustained
+line-rate or universal-protocol guarantee. A worker took about 10 seconds to
+drain traffic recorded over 6.9 seconds; a longer burst can still overflow.
+Retain and monitor the independent raw PCAP ring for recovery within its
+configured retention window.
+
+---
+
+# Historical Packet Inspector / Packet Audit 0.1.6 test prerelease
 
 Package release date: 2026-09-26.
 

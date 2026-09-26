@@ -1,5 +1,24 @@
 # Reliability and acceptance gate
 
+## What 0.1.7 changes
+
+- Removes duplicate queued payload bytes for unfragmented TCP/UDP packets and
+  avoids costly HTTP/LDAP false gates on bulk binary traffic. Detection still
+  checks supported signatures; the optimizations do not skip whole bodies.
+- Uses finite defaults of 1,024 batch slots and 128 MiB of captured bytes per
+  worker. Existing explicit host settings require a reviewed config update.
+- Reports queue-slot and byte-budget losses separately, along with peak queued
+  bytes, outstanding batches and capture-loop time. Any analysis loss makes a
+  live session incomplete. The independent raw ring is the recovery source.
+
+The controlled Win11/Kali/Linode 48 MiB burst previously caused 70,538
+analysis-queue drops in an eight-second window on the installed 0.1.6 service.
+An isolated fixed-build live run ended with 87,144 captured and dispatched
+packets, zero reported drops, zero parser errors, and a complete verdict. The
+new test-flow findings matched replay of its independent PCAP. This qualifies
+that bounded traffic mix only; the worker drain still took longer than the
+burst, so sustained traffic at the same rate can exhaust the finite queue.
+
 ## What 0.1.6 changes
 
 - Explicit short Bearer credentials are retained, while generic cookies and
