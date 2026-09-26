@@ -1,6 +1,6 @@
 # Reliability and acceptance gate
 
-## What 0.1.7 changes
+## What 0.1.7 and 0.1.8 change
 
 - Removes duplicate queued payload bytes for unfragmented TCP/UDP packets and
   avoids costly HTTP/LDAP false gates on bulk binary traffic. Detection still

@@ -1,4 +1,24 @@
-# Packet Inspector / Packet Audit 0.1.7 test prerelease
+# Packet Inspector / Packet Audit 0.1.8 test prerelease
+
+Package release date: 2026-09-26.
+
+- A final live verdict now reconciles Linux libpcap's accepted and dropped
+  packet counts against packets delivered to analysis. A mismatch or missing
+  statistics makes the session incomplete and exposes the count difference.
+- A controlled Win11-to-Linode 48 MiB transfer through Kali was fully present
+  in the independent 82,788-frame PCAP, and all 38 in-window findings from
+  the freshly pulled 0.1.7 live run matched replay. The full-interface final
+  statistics nevertheless had 84,793 accepted versus 84,763 analyzed with
+  zero reported drops. The 30-packet shutdown discrepancy is unresolved;
+  0.1.8 reports that condition instead of claiming a complete session.
+- The packet-transfer and queue improvements from 0.1.7 remain unchanged.
+  This is still a test prerelease, not a universal detection or sustained
+  zero-loss guarantee. Operators should monitor the independent raw ring and
+  investigate incomplete verdicts.
+
+---
+
+# Historical Packet Inspector / Packet Audit 0.1.7 test prerelease
 
 Package release date: 2026-09-26.
 
