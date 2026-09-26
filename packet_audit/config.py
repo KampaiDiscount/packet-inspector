@@ -80,8 +80,10 @@ class AuditConfig:
     interface: str = "eth0"
     bpf: str = DEFAULT_BPF
     workers: int = max(1, min(8, (os.cpu_count() or 2) - 1))
-    queue_size: int = 64
-    max_worker_queue_bytes: int = 64 * 1024 * 1024
+    # Slots are batches, and a single high-volume flow always uses one worker.
+    # Allow a short transfer burst to queue without removing the finite cap.
+    queue_size: int = 1024
+    max_worker_queue_bytes: int = 128 * 1024 * 1024
     snaplen: int = 262_144
     capture_buffer_mb: int = 128
     promiscuous: bool = True

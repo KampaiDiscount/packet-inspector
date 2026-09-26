@@ -52,6 +52,7 @@ def worker_process(
     control_queue=None,
     epoch_namespace: int = 0,
     queued_byte_counter=None,
+    queued_batch_counter=None,
 ) -> None:
     fragments = FragmentReassembler(
         timeout_seconds=config.fragment_idle_seconds,
@@ -132,6 +133,7 @@ def worker_process(
             stopping = True
         else:
             reserved_queue_bytes = 0
+            reserved_queue_batches = 0
             if (
                 isinstance(item, tuple)
                 and len(item) == 2
@@ -140,6 +142,7 @@ def worker_process(
             ):
                 packet_batch = item[0]
                 reserved_queue_bytes = max(0, item[1])
+                reserved_queue_batches = 1
             else:
                 packet_batch = item if isinstance(item, list) else [item]
             try:
@@ -216,6 +219,7 @@ def worker_process(
                 _release_reserved_queue_bytes(
                     queued_byte_counter, reserved_queue_bytes
                 )
+                _release_reserved_queue_bytes(queued_batch_counter, reserved_queue_batches)
 
         now = time.monotonic()
         if now - last_heartbeat >= config.heartbeat_seconds:

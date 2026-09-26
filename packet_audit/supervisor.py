@@ -74,6 +74,12 @@ class AuditSupervisor:
         self.worker_queue_byte_peaks = [
             self.ctx.Value("Q", 0) for _ in range(config.workers)
         ]
+        self.worker_queue_batch_counters = [
+            self.ctx.Value("Q", 0) for _ in range(config.workers)
+        ]
+        self.worker_queue_batch_peaks = [
+            self.ctx.Value("Q", 0) for _ in range(config.workers)
+        ]
         self.finding_queue = self.ctx.Queue(maxsize=config.queue_size * 2)
         self.operational_queue = self.ctx.Queue(maxsize=config.queue_size)
         # Low-volume lifecycle acknowledgements bypass the evidence writer so
@@ -90,6 +96,7 @@ class AuditSupervisor:
         self.captured_packets = 0
         self.dispatched_packets = 0
         self.userspace_queue_drops = 0
+        self.worker_queue_slot_dropped_packets = 0
         self.worker_queue_byte_budget_dropped_packets = 0
         self.worker_queue_byte_budget_dropped_bytes = 0
         self.capture_parse_errors = 0
@@ -103,6 +110,9 @@ class AuditSupervisor:
             worker_id: [] for worker_id in range(config.workers)
         }
         self.worker_restarts = 0
+        self.capture_batches = 0
+        self.capture_processing_ms_total = 0.0
+        self.capture_processing_ms_max = 0.0
         self.next_worker_epoch_namespace = 1
         self.incomplete_reasons: list[str] = []
         self.service_watchdog = ServiceWatchdog()
@@ -126,6 +136,8 @@ class AuditSupervisor:
     def _worker_queue_byte_health(self) -> dict[str, object]:
         current = [int(counter.value) for counter in self.worker_queue_byte_counters]
         peaks = [int(counter.value) for counter in self.worker_queue_byte_peaks]
+        current_batches = [int(counter.value) for counter in self.worker_queue_batch_counters]
+        peak_batches = [int(counter.value) for counter in self.worker_queue_batch_peaks]
         return {
             "current_bytes_by_worker": current,
             "peak_bytes_by_worker": peaks,
@@ -135,6 +147,12 @@ class AuditSupervisor:
             "max_bytes_total": self.config.max_worker_queue_bytes * self.config.workers,
             "byte_budget_dropped_packets": self.worker_queue_byte_budget_dropped_packets,
             "byte_budget_dropped_bytes": self.worker_queue_byte_budget_dropped_bytes,
+            # Outstanding includes the batch currently being processed. Queue
+            # slots themselves remain bounded by config.queue_size.
+            "outstanding_batches_by_worker": current_batches,
+            "peak_outstanding_batches_by_worker": peak_batches,
+            "max_buffered_batch_slots_per_worker": self.config.queue_size,
+            "slot_dropped_packets": self.worker_queue_slot_dropped_packets,
         }
 
     def _start_writer(self) -> None:
@@ -170,6 +188,7 @@ class AuditSupervisor:
                 self.control_queue,
                 epoch_namespace,
                 self.worker_queue_byte_counters[worker_id],
+                self.worker_queue_batch_counters[worker_id],
             ),
         )
         process.start()
@@ -406,6 +425,8 @@ class AuditSupervisor:
         batch_bytes = sum(max(0, int(packet.captured_length)) for packet in packets)
         counter = self.worker_queue_byte_counters[shard]
         peak = self.worker_queue_byte_peaks[shard]
+        batch_counter = self.worker_queue_batch_counters[shard]
+        batch_peak = self.worker_queue_batch_peaks[shard]
         while True:
             with counter.get_lock():
                 next_bytes = int(counter.value) + batch_bytes
@@ -445,6 +466,10 @@ class AuditSupervisor:
                 ),
             )
             return
+        with batch_counter.get_lock():
+            batch_counter.value += 1
+            with batch_peak.get_lock():
+                batch_peak.value = max(int(batch_peak.value), int(batch_counter.value))
         try:
             if self.offline_path:
                 while True:
@@ -463,7 +488,10 @@ class AuditSupervisor:
         except queue.Full:
             with counter.get_lock():
                 counter.value = max(0, int(counter.value) - batch_bytes)
+            with batch_counter.get_lock():
+                batch_counter.value = max(0, int(batch_counter.value) - 1)
             self.userspace_queue_drops += len(packets)
+            self.worker_queue_slot_dropped_packets += len(packets)
             self._operation(
                 "analysis_queue_drop",
                 first_packet_id=packets[0].packet_id,
@@ -480,6 +508,8 @@ class AuditSupervisor:
         except BaseException:
             with counter.get_lock():
                 counter.value = max(0, int(counter.value) - batch_bytes)
+            with batch_counter.get_lock():
+                batch_counter.value = max(0, int(batch_counter.value) - 1)
             raise
 
     def _source(self):
@@ -581,6 +611,7 @@ class AuditSupervisor:
         try:
             while not self.stop_requested and not eof:
                 batch = source.read_batch()
+                processing_started = time.perf_counter()
                 if not batch:
                     eof = bool(source.eof)
                 pending: list[list[ParsedPacket]] = [[] for _ in range(self.config.workers)]
@@ -610,6 +641,13 @@ class AuditSupervisor:
                         pending[self._route(parsed)].append(parsed)
                 for shard, packets in enumerate(pending):
                     self._dispatch_batch(shard, packets)
+                processing_ms = (time.perf_counter() - processing_started) * 1000
+                if batch:
+                    self.capture_batches += 1
+                    self.capture_processing_ms_total += processing_ms
+                    self.capture_processing_ms_max = max(
+                        self.capture_processing_ms_max, processing_ms
+                    )
                 # Liveness and progress are checked per capture batch so a
                 # short offline replay cannot outrun startup/runtime failures.
                 self._check_children()
@@ -640,6 +678,9 @@ class AuditSupervisor:
                         flow_route_override_evictions=self.flow_route_override_evictions,
                         worker_restarts=self.worker_restarts,
                         worker_queue_byte_health=self._worker_queue_byte_health(),
+                        capture_batches=self.capture_batches,
+                        capture_processing_ms_total=self.capture_processing_ms_total,
+                        capture_processing_ms_max=self.capture_processing_ms_max,
                     )
                     self._expire_fragment_routes()
                     last_heartbeat = now
@@ -1006,6 +1047,8 @@ class AuditSupervisor:
                     "worker queue byte reservations remained at shutdown: "
                     f"{worker_queue_byte_health['current_bytes']} bytes"
                 )
+            if any(worker_queue_byte_health["outstanding_batches_by_worker"]):
+                self._mark_incomplete("worker queue batch reservations remained at shutdown")
             if self.capture_parse_errors:
                 self._mark_incomplete(
                     f"capture parser rejected {self.capture_parse_errors} packets"
@@ -1043,9 +1086,13 @@ class AuditSupervisor:
                 "worker_packets_processed": worker_packets_processed,
                 "worker_findings_emitted": worker_findings_emitted,
                 "userspace_queue_drops": self.userspace_queue_drops,
+                "worker_queue_slot_dropped_packets": self.worker_queue_slot_dropped_packets,
                 "worker_queue_byte_budget_dropped_packets": self.worker_queue_byte_budget_dropped_packets,
                 "worker_queue_byte_budget_dropped_bytes": self.worker_queue_byte_budget_dropped_bytes,
                 "worker_queue_byte_health": worker_queue_byte_health,
+                "capture_batches": self.capture_batches,
+                "capture_processing_ms_total": self.capture_processing_ms_total,
+                "capture_processing_ms_max": self.capture_processing_ms_max,
                 "capture_parse_errors": self.capture_parse_errors,
                 "operational_queue_drops": self.operational_queue_drops,
                 "fragment_route_evictions": self.fragment_route_evictions,
@@ -1101,9 +1148,13 @@ class AuditSupervisor:
             "captured_packets": self.captured_packets,
             "dispatched_packets": self.dispatched_packets,
             "userspace_queue_drops": self.userspace_queue_drops,
+            "worker_queue_slot_dropped_packets": self.worker_queue_slot_dropped_packets,
             "worker_queue_byte_budget_dropped_packets": self.worker_queue_byte_budget_dropped_packets,
             "worker_queue_byte_budget_dropped_bytes": self.worker_queue_byte_budget_dropped_bytes,
             "worker_queue_byte_health": worker_queue_byte_health,
+            "capture_batches": self.capture_batches,
+            "capture_processing_ms_total": self.capture_processing_ms_total,
+            "capture_processing_ms_max": self.capture_processing_ms_max,
             "capture_parse_errors": self.capture_parse_errors,
             "operational_queue_drops": self.operational_queue_drops,
             "fragment_route_evictions": self.fragment_route_evictions,

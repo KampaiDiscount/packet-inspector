@@ -114,7 +114,46 @@ def test_dispatch_queue_full_releases_reserved_bytes(tmp_path: Path):
     assert supervisor.worker_queue_byte_counters[0].value == 0
     assert supervisor.worker_queue_byte_peaks[0].value == 100
     assert supervisor.userspace_queue_drops == 1
+    assert supervisor.worker_queue_slot_dropped_packets == 1
     assert supervisor.worker_queue_byte_budget_dropped_packets == 0
+    assert supervisor.worker_queue_batch_counters[0].value == 0
+
+
+def test_default_queue_holds_observed_single_shard_burst_with_finite_bound(tmp_path: Path):
+    # The 2026-09-26 transfer produced 105 MB of captured frame bytes in
+    # 85,656 packets. Model a slightly larger one-shard backlog without
+    # allocating payload copies: 900 batches x 128 KiB = 112.5 MiB.
+    config = AuditConfig(
+        workers=1,
+        raw_capture_enabled=False,
+        output_jsonl=tmp_path / "findings.jsonl",
+        operational_jsonl=tmp_path / "operations.jsonl",
+    )
+    config.validate()
+    supervisor = AuditSupervisor(config)
+    supervisor.worker_queues[0] = queue.Queue(maxsize=config.queue_size)
+
+    for packet_id in range(900):
+        packet = replace(_fragment(packet_id), captured_length=128 * 1024)
+        supervisor._dispatch_batch(0, [packet])
+
+    health = supervisor._worker_queue_byte_health()
+    assert supervisor.dispatched_packets == 900
+    assert supervisor.userspace_queue_drops == 0
+    assert health["current_bytes_by_worker"] == [900 * 128 * 1024]
+    assert health["peak_outstanding_batches_by_worker"] == [900]
+    assert health["max_buffered_batch_slots_per_worker"] == config.queue_size
+
+    # A longer burst still reaches a hard cap and is reported as a gap.
+    overflow_batch = [
+        replace(_fragment(901 + index), captured_length=128 * 1024)
+        for index in range(config.capture_batch_size)
+    ]
+    supervisor._dispatch_batch(0, overflow_batch)
+    assert supervisor.userspace_queue_drops == config.capture_batch_size
+    assert supervisor.worker_queue_byte_budget_dropped_packets == config.capture_batch_size
+    assert supervisor.worker_queue_slot_dropped_packets == 0
+    assert supervisor.worker_queue_byte_counters[0].value == 900 * 128 * 1024
 
 
 def test_offline_replay_waits_for_worker_queue_capacity(tmp_path: Path):
@@ -188,6 +227,7 @@ def test_worker_fatal_path_releases_dequeued_batch_reservation(
     operational_queue: queue.Queue = queue.Queue()
     control_queue: queue.Queue = queue.Queue()
     counter = AuditSupervisor(config).ctx.Value("Q", 100)
+    batch_counter = AuditSupervisor(config).ctx.Value("Q", 1)
     input_queue.put(([_fragment(3)], 100))
 
     def fail_fragment(_self, _packet):
@@ -207,9 +247,11 @@ def test_worker_fatal_path_releases_dequeued_batch_reservation(
             control_queue,
             1,
             counter,
+            batch_counter,
         )
 
     assert counter.value == 0
+    assert batch_counter.value == 0
 
 
 def test_worker_final_telemetry_drop_is_included_in_stopped_ack(tmp_path: Path):
