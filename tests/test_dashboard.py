@@ -240,7 +240,8 @@ def test_token_free_mode_connects_without_creating_token(tmp_path):
         javascript = request(server, "/app.js")[2].decode()
         assert "const requireToken = false;" in javascript
         assert "(requireToken && !token)" in javascript
-        assert "setInterval(poll,2000);poll();" in javascript
+        assert "if(paused) render(); else poll();" in javascript
+        assert "setInterval" in javascript and "poll();" in javascript
 
 
 def test_no_auth_and_token_file_conflict(tmp_path):

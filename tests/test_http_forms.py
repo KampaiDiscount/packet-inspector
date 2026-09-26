@@ -110,6 +110,34 @@ def test_json_nested_escaped_duplicate_fields_and_last_field():
         assert found[0].stream_offset == payload.index(b'"Fake\\u0020Pass!"')
 
 
+@pytest.mark.parametrize(
+    ("raw_value", "expected_value"),
+    [(b"0", "0"), (b'""', ""), (b"null", None), (b"true", None), (b"false", None)],
+)
+def test_json_password_zero_and_empty_are_observed_but_null_and_bool_are_not_values(raw_value, expected_value):
+    body = b'{"username":"FakeUser","password":' + raw_value + b"}"
+    payload = request(body, b"application/json")
+    value_start = payload.index(b'"password":') + len(b'"password":')
+    split = value_start + len(raw_value) // 2
+    detector = SensitiveDetector("test")
+
+    assert not [finding for finding in detector.process_stream(chunk(payload[:split])) if finding.category == "credential"]
+    findings = detector.process_stream(chunk(payload[split:], split, 2))
+    found = fields(findings)
+    if expected_value is None:
+        assert not [finding for finding in findings if finding.category == "credential"]
+    else:
+        assert len(found) == 1
+        assert found[0].material == {
+            "name": "password", "encoded_value": raw_value.decode(),
+            "value": expected_value, "source": "json",
+            "username": "FakeUser", "username_field": "username",
+        }
+        assert found[0].stream_offset == value_start
+        assert found[0].fields["http_body_complete"] is True
+        assert set(found[0].packet_ids) == {1, 2}
+
+
 def test_truncated_body_never_emits_partial_values_even_with_delimiters():
     payload = request(b"username=FakeUser&password=FakePass&other=next")
     detector = SensitiveDetector("test")

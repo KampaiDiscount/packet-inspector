@@ -1,4 +1,42 @@
-# Packet Inspector / Packet Audit 0.1.9 test prerelease
+# Packet Inspector / Packet Audit 0.1.10 test prerelease
+
+Package release date: 2026-09-26.
+
+- Adds bounded SOCKS5 username/password and MQTT 3.1.1/5.0 CONNECT credential
+  detection on their cleartext standard ports. MQTT 5 CONNECT Authentication
+  Data is a separate candidate finding, not a plaintext-password or success
+  claim. [COVERAGE.md](COVERAGE.md) states the exact framing and port limits.
+- Stops treating recognizable TLS ciphertext as cleartext credentials. The
+  guarded TDS Login7 parser also rejects the encrypted traffic that produced
+  a false confirmed SQL finding in the 0.1.9 lab session. TLS record recognition
+  is bounded to the observed stream origin; STARTTLS upgrades and captures
+  beginning inside a record remain limits.
+- Adds an opt-in, bounded analysis-queue optimization for a proven second
+  forwarded Ethernet copy. The independent raw ring still captures both. The
+  new counters distinguish intentional skips from packet loss and reconcile
+  every captured frame at session end. It is off by default because it adds
+  capture-path work and needs validation on each forwarding setup.
+- Raises the default worker batch-slot limit to 2,048 while retaining the
+  128 MiB per-worker byte cap. Existing `/etc` configurations are preserved by
+  the installer; review their explicit queue settings before changing them.
+- Makes dashboard coverage loss and analysis backlog prominent. Includes
+  versioned Kali start/stop wrappers for the capture and dashboard services;
+  they leave ARP interception alone.
+
+An isolated 2× replay of a preserved burst on the tested Kali host passed twice
+with duplicate suppression enabled and 2,048 slots: every expected frame was
+present in the independent raw ring, zero analysis drops were reported, and
+three synthetic credential findings matched lossless offline ground truth.
+The same replay at 1,024 slots lost analysis packets. See
+[QUALIFICATION_2026-09-26.md](QUALIFICATION_2026-09-26.md) for methods, exact
+counts, latency and limits. This finite result does not guarantee indefinite
+loss-free capture or coverage of encrypted and unsupported protocols. The
+release remains a test prerelease; monitor health counters and retain raw
+evidence during assessments.
+
+---
+
+# Historical Packet Inspector / Packet Audit 0.1.9 test prerelease
 
 Package release date: 2026-09-26.
 

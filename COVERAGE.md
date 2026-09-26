@@ -19,6 +19,8 @@ extraction. An SMB login does not necessarily use NTLM.
 | IMAP | LOGIN, AUTHENTICATE PLAIN/LOGIN | Not a complete IMAP literal/extension implementation. |
 | Redis | RESP AUTH, HELLO AUTH, simple/matched-quote inline AUTH, username and password | Port 6379; bounded fields/frames; escaped inline forms are not guessed. |
 | PostgreSQL | PasswordMessage; confirmed cleartext when server requests method 3 | Port 5432; otherwise method-unknown candidate. MD5/SASL responses are not labeled plaintext. No username pairing yet. |
+| MQTT | MQTT 3.1.1 and 5.0 CONNECT Password field with optional User Name; MQTT 5 nonempty Authentication Method/Data property candidate; validates fixed header, remaining length, flags, payload order and CONNECT/Will properties | Initial clear TCP CONNECT on port 1883 only, complete within 128 KiB. The method-defined Authentication Data candidate is not labeled a password or successful login. No TLS, WebSocket, subsequent AUTH exchange or arbitrary later-packet search. |
+| SOCKS5 | RFC 1929 username/password submission after a complete offered-and-selected method 0x02 handshake | TCP port 1080; both initial stream directions and the complete request must be captured. No encrypted tunnel decoding or authentication-result claim. |
 | MSSQL | TDS Login7 deobfuscation | Not TLS, TDS8 encryption, or arbitrary multi-packet TDS framing. |
 | SNMP | v1/v2c communities | Not SNMPv3 decryption. |
 | IRC / Telnet-like | Registration secrets and recognizable login/password fields | Telnet prompt/field patterns, not a full negotiated terminal/keystroke reassembler. |
@@ -35,12 +37,45 @@ have medium confidence. Signatures, issuers, expiry, and current usability are
 not verified. Five-part JWE and tokens beyond the bounded segment/window limits
 are not classified as JWTs by this detector.
 
+At an observed TCP stream origin, a complete TLS ClientHello/ServerHello or
+ApplicationData record identifies an opaque encrypted flow. Cleartext credential
+scanners then skip both directions, and `tls_opaque_flows`,
+`tls_opaque_midstream_flows` and `tls_opaque_chunks` count this as informational
+telemetry. The raw capture ring remains available. These counters do not make a
+capture verdict incomplete by themselves because TLS decryption is outside the
+configured inspection scope. The detector does not decrypt TLS. If observation
+begins inside a TLS record, or a cleartext connection upgrades to TLS later
+(such as STARTTLS), this origin check may miss the transition; ciphertext must
+not be treated as confirmed cleartext authentication without protocol review.
+
 The table deliberately does not claim "all protocols." Dedicated MySQL
-mysql_clear_password, PostgreSQL SCRAM/MD5 export, RADIUS/PAP, MQTT CONNECT,
-AMQP/SASL, XMPP SASL, SOCKS5 username/password, and full Telnet handling are not
+mysql_clear_password, PostgreSQL SCRAM/MD5 export, RADIUS/PAP,
+AMQP/SASL, XMPP SASL, and full Telnet handling are not
 implemented/qualified here. These are potential additions, not advertised
 coverage. Protocols on nonstandard ports need a dedicated test before relying
 on the port-gated detectors.
+
+MQTT CONNECT detection requires the first complete control packet of a TCP
+connection to be a structurally valid MQTT 3.1.1 or 5.0 CONNECT. MQTT 5 permits
+a Password without a User Name; MQTT 3.1.1 does not. A present zero-length
+Password is still recorded. A nonempty MQTT 5 CONNECT Authentication Data
+property is exported separately with its Authentication Method at medium
+confidence. The method defines its meaning: it may be a public nonce or
+challenge, not a secret. An absent or empty Authentication Data property does
+not create this candidate. Subsequent AUTH/CONNACK exchanges and authentication
+outcomes are not interpreted. MQTT 5 CONNECT and Will properties are bounded and
+validated before the payload fields are read. Frames over 128 KiB, malformed
+or missing initial framing, and missing stream origins are visible in
+`coverage_mqtt_connect_*` counters; these cases are not treated as detected
+credentials. A CONNECT Password is binary data and can be an opaque token.
+
+SOCKS5 detection requires the initial client greeting to offer username/password
+method 0x02, the initial server selection to choose it, and a complete RFC 1929
+client request. It does not search later tunneled bytes for a coincidental
+credential-shaped sequence, nor infer a password from an unobserved handshake.
+The wire format permits 1–255 octets each for username and password. The
+detector reports submitted bytes; a server success or failure response does
+not change the submission evidence.
 
 HTTP file-signature findings record the observed type, request/response role,
 declared length, bounded MIME type and, when present, a sanitized basename.
@@ -100,3 +135,6 @@ challenge/response, not a plaintext password or the account's reusable NT hash.
 - [SPNEGO ASN.1 definitions, RFC 4178](https://www.rfc-editor.org/rfc/rfc4178.html)
 - [Redis AUTH](https://redis.io/docs/latest/commands/auth/), [HELLO](https://redis.io/docs/latest/commands/hello/)
 - [PostgreSQL message formats](https://www.postgresql.org/docs/current/protocol-message-formats.html)
+- [MQTT 3.1.1 OASIS Standard](https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html), [MQTT 5.0 OASIS Standard](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html)
+- [SOCKS5 method negotiation, RFC 1928](https://www.rfc-editor.org/rfc/rfc1928.html), [username/password subnegotiation, RFC 1929](https://www.rfc-editor.org/rfc/rfc1929.html)
+- [TLS 1.2 record layer, RFC 5246](https://www.rfc-editor.org/rfc/rfc5246.html), [TLS 1.3 record layer, RFC 8446](https://www.rfc-editor.org/rfc/rfc8446.html)

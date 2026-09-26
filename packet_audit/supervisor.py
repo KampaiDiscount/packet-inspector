@@ -14,6 +14,12 @@ import uuid
 
 from .capture import PcapyLiveSource, PcapyOfflineSource
 from .config import AuditConfig
+from .forwarded_duplicates import (
+    ForwardedDuplicateSuppressor,
+    ForwardedFrame,
+    describe_forwarded_frame,
+    read_interface_mac,
+)
 from .models import CaptureHeartbeat, FlowKey, ParsedPacket, STOP_SENTINEL
 from .packets import PacketDecodeError, parse_packet_strict
 from .raw_capture import DumpcapRing
@@ -95,6 +101,17 @@ class AuditSupervisor:
         self.fragment_route_fallbacks = 0
         self.captured_packets = 0
         self.dispatched_packets = 0
+        self.capture_ignored_packets = 0
+        self.suppressed_forwarded_duplicate_packets = 0
+        self.suppressed_forwarded_duplicate_bytes = 0
+        local_mac = (
+            read_interface_mac(config.interface)
+            if config.forwarded_duplicate_suppression and self.offline_path is None
+            else None
+        )
+        self.forwarded_duplicate_suppressor = (
+            ForwardedDuplicateSuppressor(local_mac) if local_mac else None
+        )
         self.userspace_queue_drops = 0
         self.worker_queue_slot_dropped_packets = 0
         self.worker_queue_byte_budget_dropped_packets = 0
@@ -421,14 +438,63 @@ class AuditSupervisor:
             if value[1] >= flow_cutoff
         }
 
-    def _dispatch_batch(self, shard: int, packets: list[ParsedPacket]) -> None:
+    def _dispatch_batch(
+        self,
+        shard: int,
+        packets: list[ParsedPacket],
+        frames: dict[int, ForwardedFrame] | None = None,
+    ) -> None:
         if not packets:
             return
-        batch_bytes = sum(max(0, int(packet.captured_length)) for packet in packets)
+        original_packets = packets
+        original_batch_bytes = sum(max(0, int(packet.captured_length)) for packet in packets)
+        batch_bytes = original_batch_bytes
         counter = self.worker_queue_byte_counters[shard]
         peak = self.worker_queue_byte_peaks[shard]
         batch_counter = self.worker_queue_batch_counters[shard]
         batch_peak = self.worker_queue_batch_peaks[shard]
+        suppressor = self.forwarded_duplicate_suppressor
+        plan = None
+
+        def failed_admission_packets() -> tuple[list[ParsedPacket], int]:
+            # A copy matched to an ingress accepted in an earlier batch stays
+            # a legitimate skip even if unrelated retained packets fail this
+            # admission.  Same-batch pairs are actual drops on failure.
+            if plan is None:
+                return original_packets, original_batch_bytes
+            suppressor.commit_prior_skips_on_failure(plan)
+            if not plan.prior_pairs:
+                return original_packets, original_batch_bytes
+            prior_ids = {packet_id for packet_id, _ in plan.prior_pairs}
+            dropped = [packet for packet in original_packets if packet.packet_id not in prior_ids]
+            skipped_bytes = sum(
+                max(0, int(packet.captured_length))
+                for packet in original_packets
+                if packet.packet_id in prior_ids
+            )
+            self.suppressed_forwarded_duplicate_packets += len(prior_ids)
+            self.suppressed_forwarded_duplicate_bytes += skipped_bytes
+            return dropped, original_batch_bytes - skipped_bytes
+
+        if suppressor is not None:
+            # The ingress is tracked even at low occupancy.  Suppression starts
+            # only when this shard has a measurable backlog.  Both roles of a
+            # same-batch pair share a flow shard and are admitted atomically.
+            pressure = (
+                int(counter.value) + original_batch_bytes
+                >= max(1_048_576, self.config.max_worker_queue_bytes // 20)
+                or int(batch_counter.value) >= max(1, self.config.queue_size // 20)
+            )
+            plan = suppressor.plan(original_packets, frames or {}, pressure=pressure)
+            packets = plan.retained
+            batch_bytes = sum(max(0, int(packet.captured_length)) for packet in packets)
+            if not packets:
+                # Every skipped frame matched an ingress admitted in an
+                # earlier batch.  No new queue admission is needed.
+                suppressor.commit(plan)
+                self.suppressed_forwarded_duplicate_packets += len(plan.pairs)
+                self.suppressed_forwarded_duplicate_bytes += original_batch_bytes
+                return
         while True:
             with counter.get_lock():
                 next_bytes = int(counter.value) + batch_bytes
@@ -449,15 +515,16 @@ class AuditSupervisor:
                 raise AuditRuntimeError("offline replay stopped while waiting for worker capacity")
             time.sleep(0.05)
         if not reserved:
-            self.userspace_queue_drops += len(packets)
-            self.worker_queue_byte_budget_dropped_packets += len(packets)
-            self.worker_queue_byte_budget_dropped_bytes += batch_bytes
+            dropped, dropped_bytes = failed_admission_packets()
+            self.userspace_queue_drops += len(dropped)
+            self.worker_queue_byte_budget_dropped_packets += len(dropped)
+            self.worker_queue_byte_budget_dropped_bytes += dropped_bytes
             self._operation(
                 "analysis_queue_drop",
-                first_packet_id=packets[0].packet_id,
-                last_packet_id=packets[-1].packet_id,
-                packet_count=len(packets),
-                captured_bytes=batch_bytes,
+                first_packet_id=dropped[0].packet_id,
+                last_packet_id=dropped[-1].packet_id,
+                packet_count=len(dropped),
+                captured_bytes=dropped_bytes,
                 worker_id=shard,
                 drop_reason="worker_queue_byte_budget",
                 queued_payload_bytes=int(counter.value),
@@ -487,19 +554,26 @@ class AuditSupervisor:
             else:
                 self.worker_queues[shard].put_nowait((packets, batch_bytes))
             self.dispatched_packets += len(packets)
+            if plan is not None:
+                suppressor.commit(plan)
+                self.suppressed_forwarded_duplicate_packets += len(plan.pairs)
+                self.suppressed_forwarded_duplicate_bytes += (
+                    original_batch_bytes - batch_bytes
+                )
         except queue.Full:
             with counter.get_lock():
                 counter.value = max(0, int(counter.value) - batch_bytes)
             with batch_counter.get_lock():
                 batch_counter.value = max(0, int(batch_counter.value) - 1)
-            self.userspace_queue_drops += len(packets)
-            self.worker_queue_slot_dropped_packets += len(packets)
+            dropped, dropped_bytes = failed_admission_packets()
+            self.userspace_queue_drops += len(dropped)
+            self.worker_queue_slot_dropped_packets += len(dropped)
             self._operation(
                 "analysis_queue_drop",
-                first_packet_id=packets[0].packet_id,
-                last_packet_id=packets[-1].packet_id,
-                packet_count=len(packets),
-                captured_bytes=batch_bytes,
+                first_packet_id=dropped[0].packet_id,
+                last_packet_id=dropped[-1].packet_id,
+                packet_count=len(dropped),
+                captured_bytes=dropped_bytes,
                 worker_id=shard,
                 drop_reason="worker_queue_slots",
                 limitation=(
@@ -594,6 +668,12 @@ class AuditSupervisor:
             workers=self.config.workers,
             bpf=self.config.bpf,
             unredacted_export=str(self.config.output_jsonl),
+            forwarded_duplicate_suppression_requested=(
+                self.config.forwarded_duplicate_suppression
+            ),
+            forwarded_duplicate_suppression_active=(
+                self.forwarded_duplicate_suppressor is not None
+            ),
         )
         last_heartbeat = time.monotonic()
         eof = False
@@ -618,6 +698,7 @@ class AuditSupervisor:
                 if not batch:
                     eof = bool(source.eof)
                 pending: list[list[ParsedPacket]] = [[] for _ in range(self.config.workers)]
+                frame_candidates: dict[int, ForwardedFrame] = {}
                 for captured in batch:
                     self.captured_packets += 1
                     self.last_packet_monotonic = time.monotonic()
@@ -642,8 +723,18 @@ class AuditSupervisor:
                         raise
                     if parsed is not None:
                         pending[self._route(parsed)].append(parsed)
+                        if self.forwarded_duplicate_suppressor is not None:
+                            frame = describe_forwarded_frame(
+                                captured,
+                                parsed,
+                                self.forwarded_duplicate_suppressor.local_mac,
+                            )
+                            if frame is not None:
+                                frame_candidates[parsed.packet_id] = frame
+                    else:
+                        self.capture_ignored_packets += 1
                 for shard, packets in enumerate(pending):
-                    self._dispatch_batch(shard, packets)
+                    self._dispatch_batch(shard, packets, frame_candidates)
                 processing_ms = (time.perf_counter() - processing_started) * 1000
                 if batch:
                     self.capture_batches += 1
@@ -673,6 +764,21 @@ class AuditSupervisor:
                         "capture_heartbeat",
                         **asdict(heartbeat),
                         capture_parse_errors=self.capture_parse_errors,
+                        capture_ignored_packets=self.capture_ignored_packets,
+                        suppressed_forwarded_duplicate_packets=(
+                            self.suppressed_forwarded_duplicate_packets
+                        ),
+                        suppressed_forwarded_duplicate_bytes=(
+                            self.suppressed_forwarded_duplicate_bytes
+                        ),
+                        forwarded_duplicate_cache_entries=(
+                            self.forwarded_duplicate_suppressor.entries
+                            if self.forwarded_duplicate_suppressor else 0
+                        ),
+                        forwarded_duplicate_cache_key_bytes=(
+                            self.forwarded_duplicate_suppressor.key_bytes
+                            if self.forwarded_duplicate_suppressor else 0
+                        ),
                         operational_queue_drops=self.operational_queue_drops,
                         fragment_route_entries=len(self.fragment_routes),
                         fragment_route_evictions=self.fragment_route_evictions,
@@ -818,19 +924,23 @@ class AuditSupervisor:
                 int((report.get("detector") or {}).get("parser_errors", 0))
                 for report in self.worker_reports.values()
             )
-            coverage_counters = {
+            reported_detector_counters = {
                 name
                 for report in self.worker_reports.values()
                 for name in (report.get("detector") or {})
-                if name.startswith(("http_", "coverage_"))
+                if name.startswith(("http_", "coverage_", "tls_opaque_"))
             }
-            for name in sorted(coverage_counters):
+            for name in sorted(reported_detector_counters):
                 total = sum(
                     int((report.get("detector") or {}).get(name, 0))
                     for report in self.worker_reports.values()
                 )
                 worker_health_totals[f"detector_{name}"] = total
-                if total and name != "http_framed_requests":
+                if (
+                    total
+                    and name != "http_framed_requests"
+                    and not name.startswith("tls_opaque_")
+                ):
                     family = "HTTP" if name.startswith("http_") else "Protocol"
                     self._mark_incomplete(f"{family} coverage limitation {name}={total}")
             for total_name, detector_name in (
@@ -1044,6 +1154,18 @@ class AuditSupervisor:
                 self._mark_incomplete(
                     f"userspace analysis queues dropped {self.userspace_queue_drops} packets"
                 )
+            accounted_packets = (
+                self.dispatched_packets
+                + self.suppressed_forwarded_duplicate_packets
+                + self.userspace_queue_drops
+                + self.capture_parse_errors
+                + self.capture_ignored_packets
+            )
+            if accounted_packets != self.captured_packets:
+                self._mark_incomplete(
+                    "capture-to-analysis accounting mismatch: "
+                    f"captured={self.captured_packets}, accounted={accounted_packets}"
+                )
             if self.worker_queue_byte_budget_dropped_packets:
                 self._mark_incomplete(
                     "worker queue byte budgets dropped "
@@ -1108,6 +1230,13 @@ class AuditSupervisor:
                 "session_id": self.session_id,
                 "captured_packets": self.captured_packets,
                 "dispatched_packets": self.dispatched_packets,
+                "capture_ignored_packets": self.capture_ignored_packets,
+                "suppressed_forwarded_duplicate_packets": (
+                    self.suppressed_forwarded_duplicate_packets
+                ),
+                "suppressed_forwarded_duplicate_bytes": (
+                    self.suppressed_forwarded_duplicate_bytes
+                ),
                 "worker_packets_processed": worker_packets_processed,
                 "worker_findings_emitted": worker_findings_emitted,
                 "userspace_queue_drops": self.userspace_queue_drops,
@@ -1172,6 +1301,13 @@ class AuditSupervisor:
             "session_id": self.session_id,
             "captured_packets": self.captured_packets,
             "dispatched_packets": self.dispatched_packets,
+            "capture_ignored_packets": self.capture_ignored_packets,
+            "suppressed_forwarded_duplicate_packets": (
+                self.suppressed_forwarded_duplicate_packets
+            ),
+            "suppressed_forwarded_duplicate_bytes": (
+                self.suppressed_forwarded_duplicate_bytes
+            ),
             "userspace_queue_drops": self.userspace_queue_drops,
             "worker_queue_slot_dropped_packets": self.worker_queue_slot_dropped_packets,
             "worker_queue_byte_budget_dropped_packets": self.worker_queue_byte_budget_dropped_packets,
