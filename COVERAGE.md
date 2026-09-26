@@ -25,6 +25,16 @@ extraction. An SMB login does not necessarily use NTLM.
 | Other authentication | Kerberos AS-REQ etype 23 and SIP Digest when required fields are present | Not universal Kerberos, RADIUS, EAP or VPN decoding. |
 | Generic secrets | Named secret fields, selected tokens, JWTs, PEM private keys and Luhn-valid card candidates | Candidates are not validity or successful-authentication claims. |
 
+An explicit HTTP Bearer header is recognized even when the value is short,
+within the bounded 8 KiB header-token limit. All observed HTTP cookies remain
+visible; a cookie is marked as a session candidate only when its name matches
+a known session-token pattern. Compact JWT candidates require base64url JSON
+object header/payload structure. Signed three-part candidates have structural
+confidence only; valid unsecured `alg:none` candidates with an empty signature
+have medium confidence. Signatures, issuers, expiry, and current usability are
+not verified. Five-part JWE and tokens beyond the bounded segment/window limits
+are not classified as JWTs by this detector.
+
 The table deliberately does not claim "all protocols." Dedicated MySQL
 mysql_clear_password, PostgreSQL SCRAM/MD5 export, RADIUS/PAP, MQTT CONNECT,
 AMQP/SASL, XMPP SASL, SOCKS5 username/password, and full Telnet handling are not
