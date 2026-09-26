@@ -143,6 +143,7 @@ def test_default_queue_holds_observed_single_shard_burst_with_finite_bound(tmp_p
     assert health["current_bytes_by_worker"] == [900 * 128 * 1024]
     assert health["peak_outstanding_batches_by_worker"] == [900]
     assert health["max_buffered_batch_slots_per_worker"] == config.queue_size
+    assert health["max_outstanding_batches_per_worker"] == config.queue_size + 2
 
     # A longer burst still reaches a hard cap and is reported as a gap.
     overflow_batch = [

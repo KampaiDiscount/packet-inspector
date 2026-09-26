@@ -147,11 +147,13 @@ class AuditSupervisor:
             "max_bytes_total": self.config.max_worker_queue_bytes * self.config.workers,
             "byte_budget_dropped_packets": self.worker_queue_byte_budget_dropped_packets,
             "byte_budget_dropped_bytes": self.worker_queue_byte_budget_dropped_bytes,
-            # Outstanding includes the batch currently being processed. Queue
-            # slots themselves remain bounded by config.queue_size.
+            # Outstanding includes the worker's active batch and the
+            # producer's reservation during put(), in addition to buffered
+            # batches. Queue slots remain bounded by config.queue_size.
             "outstanding_batches_by_worker": current_batches,
             "peak_outstanding_batches_by_worker": peak_batches,
             "max_buffered_batch_slots_per_worker": self.config.queue_size,
+            "max_outstanding_batches_per_worker": self.config.queue_size + 2,
             "slot_dropped_packets": self.worker_queue_slot_dropped_packets,
         }
 

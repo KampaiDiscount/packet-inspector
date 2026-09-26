@@ -32,13 +32,13 @@ def _emit_operation(operational_queue, record: dict) -> bool:
         return False
 
 
-def _release_reserved_queue_bytes(queued_byte_counter, reserved_bytes: int) -> None:
-    if queued_byte_counter is None or reserved_bytes <= 0:
+def _release_reserved_queue_units(counter, reserved_units: int) -> None:
+    if counter is None or reserved_units <= 0:
         return
-    lock = queued_byte_counter.get_lock()
+    lock = counter.get_lock()
     with lock:
-        queued_byte_counter.value = max(
-            0, int(queued_byte_counter.value) - int(reserved_bytes)
+        counter.value = max(
+            0, int(counter.value) - int(reserved_units)
         )
 
 
@@ -216,10 +216,10 @@ def worker_process(
                         )
                         raise
             finally:
-                _release_reserved_queue_bytes(
+                _release_reserved_queue_units(
                     queued_byte_counter, reserved_queue_bytes
                 )
-                _release_reserved_queue_bytes(queued_batch_counter, reserved_queue_batches)
+                _release_reserved_queue_units(queued_batch_counter, reserved_queue_batches)
 
         now = time.monotonic()
         if now - last_heartbeat >= config.heartbeat_seconds:
