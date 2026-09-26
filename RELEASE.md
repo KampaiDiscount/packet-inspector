@@ -9,10 +9,17 @@ Package release date: 2026-09-26.
   capacity. Live capture continues to report overload rather than blocking.
 - Captures recognized outer VLAN tags by default on Ethernet and Linux cooked
   links, so tagged IPv4/IPv6 can reach both analysis and the raw ring.
+- Ignores acknowledged one-byte TCP keepalive probes when reporting stream
+  overlap conflicts, while retaining alerts for conflicting payload bytes.
+- Keeps HTTP form and text-body login evidence in HTTP-specific categories,
+  avoids calling bare login lines HTTP or Telnet without matching framing, and
+  does not treat the `Negotiate` authentication scheme name as a secret.
 - Validated against the controlled NXC-to-Responder capture, synthetic
   concurrency/fragmentation/ambiguity cases, native libpcap VLAN fixtures and
-  the Kali test suite. The zero-ID pair has reduced confidence because the
-  listener did not provide a unique session identifier.
+  the Kali test suite. Live synthetic HTTP and non-HTTP flows checked detector
+  output against the actual packets and transport endpoints. The zero-ID pair
+  has reduced confidence because the listener did not provide a unique session
+  identifier.
 
 Existing Kali installations retain an explicit `bpf` setting. Change the old
 `ip or ip6` setting to the 0.1.5 default after backing up the configuration;
