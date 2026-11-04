@@ -36,6 +36,42 @@ def test_http_literal_prefilter_covers_every_regex_alternative() -> None:
         assert any(token in example.lower() for token in _HTTP_GATE_LITERALS)
 
 
+def test_named_http_secret_header_is_bounded_to_verified_headers() -> None:
+    detector = SensitiveDetector("session")
+    body = b"X-Api-Key: body-text-is-not-a-header\n"
+    request = (
+        b"POST /submit HTTP/1.1\r\nHost: lab.invalid\r\n"
+        b"X-Api-Key: LAB-API-HEADER-9372d4c8\r\n"
+        b"X-Request-ID: request-identifier-only\r\n"
+        b"Content-Type: text/plain\r\nContent-Length: "
+        + str(len(body)).encode() + b"\r\n\r\n" + body
+    )
+    findings = detector.process_stream(chunk(request))
+    headers = by_type(findings, "http_named_secret_header")
+    assert len(headers) == 1
+    assert headers[0].material == {
+        "header": "X-Api-Key", "value": "LAB-API-HEADER-9372d4c8"
+    }
+    assert headers[0].packet_ids == (1,)
+    assert all("request-identifier-only" not in str(f.material) for f in findings)
+
+
+def test_http_json_response_session_token_is_a_secret_candidate() -> None:
+    detector = SensitiveDetector("session")
+    body = b'{"session_token":"LAB-SESSION-RESP-9c60138f","password_policy":"strong"}'
+    response = (
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+        + str(len(body)).encode() + b"\r\n\r\n" + body
+    )
+    findings = detector.process_stream(chunk(response, direction=1))
+    assignments = [f for f in findings if f.detector == "generic_secret_assignment"]
+    assert any(
+        f.material == {"name": "session_token", "value": "LAB-SESSION-RESP-9c60138f"}
+        for f in assignments
+    )
+    assert all("password_policy" not in str(f.material) for f in findings)
+
+
 def chunk(
     data: bytes,
     *,
