@@ -12,7 +12,7 @@ extraction. An SMB login does not necessarily use NTLM.
 | HTTP NTLM | Direct NTLM and bounded ASN.1 SPNEGO NegTokenInit/NegTokenResp in authentication headers | No Kerberos-to-NTLM conversion, HTTPS decryption, or arbitrary ASN.1 search. |
 | Mail NTLM | Complete base64 NTLM/SPNEGO tokens in SMTP/POP3/IMAP lines on 25/587/110/143 | 16 KiB encoded token limit; not encrypted SMTP/IMAP/POP3 sessions. |
 | LDAP | BER simple bind credentials; embedded raw NTLM in SASL exchanges | Does not decode every SASL mechanism, signed/sealed application data, or LDAPS. Repeated binds are separately emitted. |
-| HTTP cleartext | Basic, form/query fields, typed JSON secrets, cookies, Bearer, Digest | HTTP/1 framing. See LOGIN_FIELDS.md. No deep HTTP/2, multipart, or compressed body decoding. |
+| HTTP cleartext | Basic, form/query fields, typed JSON secrets, cookies, Bearer, Digest, named API/token headers | HTTP/1 framing. See LOGIN_FIELDS.md. No deep HTTP/2, multipart, or compressed body decoding. Header names indicate candidate sensitivity, not token validity. |
 | HTTP file signatures | PNG, JPEG, GIF, WebP, PDF and ZIP magic at the start of clear HTTP/1 request/response bodies | Content-Length framing and a bounded prefix are required. This is a file-type observation, not proof that the transfer completed or the application accepted it. |
 | FTP / POP3 | USER/PASS correlation | Clear command channel only. |
 | SMTP | AUTH PLAIN and LOGIN, including multistep forms | No TLS or every SASL mechanism. |

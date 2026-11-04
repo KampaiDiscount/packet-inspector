@@ -1,5 +1,15 @@
 # Packet Inspector / Packet Audit 0.1.10 test prerelease
 
+## Unreleased 0.1.11.dev0 lab candidate
+
+The HTTP/1 parser now reports bounded `X-Api-Key`, `Api-Key`, `X-Auth-Token`,
+`X-Client-Secret`, and `X-Session-Token` header values as secret candidates
+only when they occur inside a framed header block. Generic named-secret
+matching now includes `session_token`, `session-token`, and `sessionToken`
+response fields. Synthetic ARP MITM traffic from an isolated victim to a
+controlled Linode fixture exposed the two missed values. The additions do not
+decrypt TLS or establish that a candidate token is valid.
+
 Package release date: 2026-09-26.
 
 - Adds bounded SOCKS5 username/password and MQTT 3.1.1/5.0 CONNECT credential

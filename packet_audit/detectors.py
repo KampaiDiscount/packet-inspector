@@ -81,6 +81,9 @@ _SENSITIVE_FIELDS = {
     "auth",
     "session",
     "sessionid",
+    "session_token",
+    "session-token",
+    "sessiontoken",
     "sid",
 }
 
@@ -100,6 +103,10 @@ _HTTP_NTLM_RE = re.compile(
     rb"(?im)^(Proxy-Authorization|Authorization|WWW-Authenticate|Proxy-Authenticate)\s*:\s*(?:NTLM|Negotiate)\s+([A-Za-z0-9+/=_-]{12,})[ \t]*\r?\n"
 )
 _COOKIE_RE = re.compile(rb"(?im)^(Cookie|Set-Cookie)\s*:\s*([^\r\n]{1,16384})\r?\n")
+_HTTP_NAMED_SECRET_HEADER_RE = re.compile(
+    rb"(?im)^(X-Api-Key|Api-Key|X-Auth-Token|X-Client-Secret|X-Session-Token)"
+    rb"[ \t]*:[ \t]*([^\r\n]{1,8192})\r?\n"
+)
 _FORM_FIELD_RE = re.compile(
     rb"(?i)(?:^|[?&;\s])([A-Za-z][A-Za-z0-9_.-]{0,63})=([^&;\s\r\n]{0,8192})(?=[&;\s\r\n])"
 )
@@ -216,7 +223,7 @@ _GENERIC_STRONG_PREFIXES = (
     b"sk_test_",
 )
 _GENERIC_NAMED_GATE_RE = re.compile(
-    rb"(?:password|passwd|pwd|passphrase|token|access_token|refresh_token|id_token|api[_-]?key|apikey|secret|client_secret|private_key|authorization|auth|session(?:id)?|sid|pin)\s*[\"']?\s*[:=]"
+    rb"(?:password|passwd|pwd|passphrase|token|access_token|refresh_token|id_token|api[_-]?key|apikey|secret|client_secret|private_key|authorization|auth|session(?:id|[_-]?token)?|sid|pin)\s*[\"']?\s*[:=]"
 )
 
 
@@ -2623,6 +2630,22 @@ class SensitiveDetector:
             data=bytes(ctx.data[message.start:message.start + message.end]),
         )
         findings.extend(self._scan_http(replace(message_ctx, data=message_ctx.data[:message.header_end]), state))
+        for match in _HTTP_NAMED_SECRET_HEADER_RE.finditer(message_ctx.data[:message.header_end]):
+            value = match.group(2).rstrip(b" \t")
+            if not value:
+                continue
+            finding = self._emit(
+                message_ctx, state,
+                detector="http_named_secret_header",
+                start=match.start(2), end=match.start(2) + len(value),
+                category="secret", protocol="http",
+                material_type="http_named_secret_header",
+                material={"header": match.group(1).decode("ascii"), "value": value.decode("latin-1")},
+                confidence="high",
+                limitations=["Header name indicates sensitivity; token validity and application use were not tested."],
+            )
+            if finding:
+                findings.append(finding)
         collections = []
         if b"?" in message.target:
             query_start = message.target.index(b"?") + 1
